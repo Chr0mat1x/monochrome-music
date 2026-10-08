@@ -488,19 +488,17 @@ export async function searchYouTube(query: string, limit = 25): Promise<Track[]>
   return []
 }
 
-/** Look up the full-length YouTube video that matches a Deezer/iTunes track. */
-export async function findYouTubeTrack(artist: string, title: string): Promise<Track | null> {
-  const query = `${artist} ${title}`
-  const results = await searchYouTube(query, 8)
-  if (!results.length) return null
-  const clean = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\s+/g, ' ').trim()
-  const wantTitle = clean(title)
-  const wantArtist = clean(artist)
-  // Prefer an exact-ish title match, then anything by the same uploader.
-  const scored = results
+const cleanName = (s: string) =>
+  s.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\s+/g, ' ').trim()
+
+/** Rank YouTube results for a track, best match first. */
+function rankYouTube(results: Track[], artist: string, title: string): Track[] {
+  const wantTitle = cleanName(title)
+  const wantArtist = cleanName(artist)
+  return results
     .map((t) => {
-      const ct = clean(t.title)
-      const ca = clean(t.artist)
+      const ct = cleanName(t.title)
+      const ca = cleanName(t.artist)
       let score = 0
       if (ct === wantTitle) score += 4
       else if (ct.includes(wantTitle) || wantTitle.includes(ct)) score += 2
@@ -511,7 +509,25 @@ export async function findYouTubeTrack(artist: string, title: string): Promise<T
       return { t, score }
     })
     .sort((a, b) => b.score - a.score)
-  return scored[0]?.score > 0 ? scored[0].t : results[0]
+    .map((s) => s.t)
+}
+
+/** Look up the full-length YouTube video that matches a Deezer/iTunes track. */
+export async function findYouTubeTrack(artist: string, title: string): Promise<Track | null> {
+  const results = await searchYouTube(`${artist} ${title}`, 10)
+  if (!results.length) return null
+  const ranked = rankYouTube(results, artist, title)
+
+  // When the local audio server is available, YouTube's own availability is
+  // what matters: official uploads are often region/IP-blocked while a
+  // re-upload plays fine, so walk the ranked list until one resolves.
+  if (await hasAudioServer()) {
+    for (const candidate of ranked) {
+      if (await resolveFullAudio(candidate.sourceId)) return candidate
+    }
+    return null
+  }
+  return ranked[0]
 }
 
 /* ------------------------------------------------------------------ *
@@ -607,11 +623,19 @@ export function hasAudioServer(): Promise<boolean> {
   return audioServerProbe
 }
 
+const resolveCache = new Map<string, Promise<string | null>>()
+
 /** Confirm the server can actually pull a given video before we commit to it. */
-export async function resolveFullAudio(videoId: string): Promise<string | null> {
-  if (!(await hasAudioServer())) return null
-  const data = await jsonFetch<{ ok?: boolean }>(`${AUDIO_SERVER}/resolve?id=${videoId}`, 20000)
-  return data?.ok ? `${AUDIO_SERVER}/audio?id=${videoId}` : null
+export function resolveFullAudio(videoId: string): Promise<string | null> {
+  const hit = resolveCache.get(videoId)
+  if (hit) return hit
+  const task = (async () => {
+    if (!(await hasAudioServer())) return null
+    const data = await jsonFetch<{ ok?: boolean }>(`${AUDIO_SERVER}/resolve?id=${videoId}`, 20000)
+    return data?.ok ? `${AUDIO_SERVER}/audio?id=${videoId}` : null
+  })()
+  resolveCache.set(videoId, task)
+  return task
 }
 
 /* ------------------------------------------------------------------ *

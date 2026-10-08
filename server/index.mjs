@@ -98,8 +98,18 @@ async function handleAudio(req, res, videoId) {
     return
   }
   // Forward the range request so seeking works without downloading everything.
+  // A cached URL can expire or get rejected, so drop it and resolve once more.
   const range = req.headers.range
-  const upstream = await fetch(url, { headers: range ? { range } : {} }).catch(() => null)
+  let upstream = await fetch(url, { headers: range ? { range } : {} }).catch(() => null)
+  if (!upstream || !upstream.ok || !upstream.body) {
+    urlCache.delete(videoId)
+    try {
+      url = await directUrl(videoId)
+      upstream = await fetch(url, { headers: range ? { range } : {} }).catch(() => null)
+    } catch {
+      upstream = null
+    }
+  }
   if (!upstream || !upstream.ok || !upstream.body) {
     res.writeHead(502).end('upstream fetch failed')
     return
@@ -124,8 +134,10 @@ async function handleResolve(res, videoId) {
   }
   try {
     await directUrl(videoId)
+    console.log(`[monochrome]   ↳ ok ${videoId}`)
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}')
   } catch (e) {
+    console.log(`[monochrome]   ↳ fail ${videoId}: ${String(e.message || e).slice(0, 80)}`)
     res
       .writeHead(502, { 'content-type': 'application/json' })
       .end(JSON.stringify({ error: String(e.message || e) }))
