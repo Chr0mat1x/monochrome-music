@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Track } from '../types'
-import { searchAll, audiusTrending, deezerChart } from '../lib/musicApi'
+import { searchAll, audiusTrending, deezerChart, deezerArtistPicture } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
 import { Cover } from '../components/Cover'
@@ -103,6 +103,22 @@ export function Home() {
     for (const t of allTracks) if (!seen.has(t.artist) && t.artwork) seen.set(t.artist, { name: t.artist, art: t.artwork })
     return Array.from(seen.values()).slice(0, 6)
   }, [allTracks])
+
+  // artist cards look better with a portrait than an album cover
+  const [portraits, setPortraits] = useState<Record<string, string>>({})
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const entries = await Promise.all(
+        artists.map(async (a) => [a.name, await deezerArtistPicture(a.name).catch(() => null)] as const),
+      )
+      if (cancelled) return
+      setPortraits(Object.fromEntries(entries.filter(([, pic]) => pic) as [string, string][]))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [artists])
 
   return (
     <div className="px-4 pb-10 sm:px-6">
@@ -212,7 +228,7 @@ export function Home() {
           <h2 className="mb-3 text-xl font-bold tracking-tight text-ink-100">Артисты</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {artists.map((a) => (
-              <MediaCard key={a.name} to={`/artist/${encodeURIComponent(a.name)}`} seed={a.name} artwork={a.art} tone={55} title={a.name} subtitle="артист" circle />
+              <MediaCard key={a.name} to={`/artist/${encodeURIComponent(a.name)}`} seed={a.name} artwork={portraits[a.name] ?? a.art} tone={55} title={a.name} subtitle="артист" circle />
             ))}
           </div>
         </section>
