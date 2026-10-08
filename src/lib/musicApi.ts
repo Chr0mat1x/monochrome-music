@@ -241,6 +241,8 @@ export interface DeezerAlbumInfo {
   title: string
   year: number
   artwork: string | null
+  /** 'album' | 'single' | 'ep' | 'compile' — drives the artist page filters. */
+  recordType: string
 }
 
 /**
@@ -259,13 +261,14 @@ export async function deezerFindAlbum(artistName: string, albumTitle: string): P
   // the search payload omits release_date; the album detail endpoint has it
   const [tracks, detail] = await Promise.all([
     deezerAlbumTracks(id),
-    jsonp<{ release_date?: string; cover_xl?: string; cover_big?: string }>(`${DEEZER}/album/${id}`),
+    jsonp<{ release_date?: string; cover_xl?: string; cover_big?: string; record_type?: string }>(`${DEEZER}/album/${id}`),
   ])
   return {
     info: {
       id,
       title: candidate.title,
       year: detail?.release_date ? new Date(detail.release_date).getFullYear() : 0,
+      recordType: candidate.record_type || detail?.record_type || 'album',
       artwork:
         detail?.cover_xl ||
         detail?.cover_big ||
@@ -287,6 +290,7 @@ export async function deezerArtistAlbums(artistId: string, limit = 50): Promise<
       title: a.title,
       year: a.release_date ? new Date(a.release_date).getFullYear() : 0,
       artwork: a.cover_xl || a.cover_big || a.cover_medium || null,
+      recordType: a.record_type || 'album',
     }))
 }
 
@@ -473,8 +477,13 @@ export async function getArtist(name: string): Promise<{ artist: Artist; tracks:
     // prefer a real portrait; fall back to album art only if none exists
     picture: info?.picture ?? artistPictures.get(name.toLowerCase()) ?? pool.find((t) => t.artwork)?.artwork ?? null,
   }
-  const albums: Album[] = realAlbums.length
-    ? realAlbums.slice(0, 12).map((a) => {
+  // Deezer lists re-issues and editions separately; collapse them by title
+  const uniqueAlbums = realAlbums.filter(
+    (a, i, all) => all.findIndex((b) => b.title.toLowerCase() === a.title.toLowerCase()) === i,
+  )
+
+  const albums: Album[] = uniqueAlbums.length
+    ? uniqueAlbums.slice(0, 18).map((a) => {
         // link to the album page so its full tracklist is fetched on demand
         const known = pool.filter((t) => t.album.toLowerCase() === a.title.toLowerCase())
         return {
@@ -485,6 +494,7 @@ export async function getArtist(name: string): Promise<{ artist: Artist; tracks:
           trackIds: known.map((t) => t.id),
           artwork: a.artwork,
           genre: known[0]?.genre ?? pool[0]?.genre ?? '',
+          recordType: a.recordType,
         }
       })
     : Array.from(albumMap.values()).filter((a) => a.trackIds.length >= 2)

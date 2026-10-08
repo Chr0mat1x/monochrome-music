@@ -48,6 +48,8 @@ interface StoreState {
   repeat: RepeatMode
   shuffle: boolean
   shuffleOrder: number[]
+  /** Sleep timer: epoch ms when playback should stop, or null when off. */
+  sleepAt: number | null
 
   register: (tracks: Track[]) => void
   playTrack: (track: Track, context?: Track[]) => void
@@ -59,8 +61,10 @@ interface StoreState {
   setVolume: (v: number) => void
   toggleShuffle: () => void
   cycleRepeat: () => void
+  setSleepTimer: (minutes: number | null) => void
 
   enqueue: (track: Track) => void
+  playNext: (track: Track) => void
   removeFromQueue: (index: number) => void
 
   toggleLike: (track: Track) => void
@@ -107,6 +111,8 @@ function reviveTrack(t: any): Track {
   return { ...t, ...profile } as Track
 }
 
+let sleepAtTimer: number | null = null
+
 export const useStore = create<StoreState>((set, get) => {
   const bootVolume = persisted.volume ?? 0.85
 
@@ -145,6 +151,7 @@ export const useStore = create<StoreState>((set, get) => {
     repeat: persisted.repeat ?? 'off',
     shuffle: persisted.shuffle ?? false,
     shuffleOrder: [],
+    sleepAt: null,
 
     register: (tracks) => {
       const registry = get().registry
@@ -257,6 +264,24 @@ export const useStore = create<StoreState>((set, get) => {
       persist(get())
     },
 
+    setSleepTimer: (minutes) => {
+      if (sleepAtTimer) {
+        window.clearTimeout(sleepAtTimer)
+        sleepAtTimer = null
+      }
+      if (minutes == null) {
+        set({ sleepAt: null })
+        return
+      }
+      const at = Date.now() + minutes * 60_000
+      set({ sleepAt: at })
+      sleepAtTimer = window.setTimeout(() => {
+        engine.pause()
+        set({ sleepAt: null })
+        sleepAtTimer = null
+      }, minutes * 60_000)
+    },
+
     enqueue: (track) => {
       const { queue, currentTrack } = get()
       get().register([track])
@@ -264,7 +289,19 @@ export const useStore = create<StoreState>((set, get) => {
         get().playTrack(track)
         return
       }
-      set({ queue: [...queue, track] })
+      set({ queue: [...queue, track], shuffleOrder: makeShuffleOrder(queue.length + 1) })
+    },
+
+    playNext: (track) => {
+      const { queue, queueIndex, currentTrack } = get()
+      get().register([track])
+      if (!currentTrack || queueIndex < 0) {
+        get().playTrack(track)
+        return
+      }
+      const next = [...queue]
+      next.splice(queueIndex + 1, 0, track)
+      set({ queue: next, shuffleOrder: makeShuffleOrder(next.length) })
     },
 
     removeFromQueue: (index) => {

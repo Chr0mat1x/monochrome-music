@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Track } from '../types'
 import { useStore } from '../store/useStore'
-import { IconCheck, IconHeart, IconPlus, IconQueue, IconTrash } from './Icons'
+import { downloadTrack } from '../lib/download'
+import { IconCheck, IconDownload, IconHeart, IconListPlus, IconPlus, IconQueue, IconTrash } from './Icons'
 
 interface TrackMenuProps {
   track: Track
@@ -19,6 +20,7 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
   const liked = useStore((s) => s.liked.some((t) => t.id === track.id))
   const toggleLike = useStore((s) => s.toggleLike)
   const enqueue = useStore((s) => s.enqueue)
+  const playNext = useStore((s) => s.playNext)
   const addToPlaylist = useStore((s) => s.addToPlaylist)
   const createPlaylist = useStore((s) => s.createPlaylist)
   const playTrack = useStore((s) => s.playTrack)
@@ -62,12 +64,22 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
       <button
         className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
         onClick={() => {
+          playNext(track)
+          onClose()
+        }}
+      >
+        <IconListPlus width={16} height={16} />
+        Играть следующим
+      </button>
+      <button
+        className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
+        onClick={() => {
           enqueue(track)
           onClose()
         }}
       >
         <IconQueue width={16} height={16} />
-        В очередь
+        В конец очереди
       </button>
       <button
         className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
@@ -78,6 +90,17 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
       >
         <IconHeart filled={liked} width={16} height={16} />
         {liked ? 'Убрать из избранного' : 'В избранное'}
+      </button>
+
+      <button
+        className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
+        onClick={() => {
+          void downloadTrack(track).catch(() => {})
+          onClose()
+        }}
+      >
+        <IconDownload width={16} height={16} />
+        {track.preview ? 'Скачать превью' : 'Скачать трек'}
       </button>
 
       <div className="my-1 h-px bg-ink-25" />

@@ -38,6 +38,8 @@ export interface Album {
   trackIds: string[]
   artwork: string | null
   genre: string
+  /** 'album' | 'single' | 'ep' | 'compile' when the source knows it. */
+  recordType?: string
 }
 
 export interface Artist {

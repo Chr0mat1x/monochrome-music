@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import type { Album, Artist, Track } from '../types'
 import { getArtist } from '../lib/musicApi'
@@ -16,6 +16,7 @@ export function ArtistPage() {
   const [tracks, setTracks] = useState<Track[]>([])
   const [albums, setAlbums] = useState<Album[]>([])
   const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState<'all' | 'album' | 'single'>('all')
   const playContext = useStore((s) => s.playContext)
   const register = useStore((s) => s.register)
   const shuffle = useStore((s) => s.shuffle)
@@ -38,6 +39,12 @@ export function ArtistPage() {
       cancelled = true
     }
   }, [artistName, register])
+
+  const filteredAlbums = useMemo(() => {
+    if (filter === 'all') return albums
+    if (filter === 'album') return albums.filter((a) => a.recordType === 'album' || a.recordType === 'compile' || !a.recordType)
+    return albums.filter((a) => a.recordType === 'single' || a.recordType === 'ep')
+  }, [albums, filter])
 
   const playShuffled = () => {
     if (!shuffle) toggleShuffle()
@@ -99,9 +106,28 @@ export function ArtistPage() {
 
       {albums.length > 0 && (
         <div className="px-4 sm:px-6">
-          <h2 className="mb-3 mt-8 text-xl font-bold text-ink-100">Альбомы</h2>
+          <div className="mb-3 mt-8 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xl font-bold text-ink-100">Дискография</h2>
+            <div className="flex gap-1 rounded-full border border-ink-25 p-0.5">
+              {([
+                ['all', 'Всё'],
+                ['album', 'Альбомы'],
+                ['single', 'Синглы'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    filter === key ? 'bg-ink-100 text-ink-0' : 'text-ink-70 hover:text-ink-100'
+                  }`}
+                  onClick={() => setFilter(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {albums.map((a) => (
+            {filteredAlbums.map((a) => (
               <MediaCard
                 key={a.id}
                 to={`/album/${encodeURIComponent(a.artist)}::${encodeURIComponent(a.title)}`}

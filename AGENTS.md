@@ -62,3 +62,9 @@ and streamed straight into the browser.
   distinction between 30s previews and full streams stays honest.
 - The engine drives the store through `engine.setEvents` (onEnded, onPlaying-
   Change, onLoadingChange, onDuration, onError). Keep that wiring intact.
+- Player keyboard shortcuts live in `Player.tsx` (space, ←/→ seek 5s, ↑/↓
+  volume, N/B next/prev, S shuffle, R repeat, M mute). They ignore events
+  whose target is an input/textarea.
+- `downloadTrack` (`src/lib/download.ts`) fetches the CDN bytes into a Blob
+  because the media hosts send permissive CORS headers; if that fetch is
+  blocked it falls back to opening the raw URL.

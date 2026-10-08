@@ -90,3 +90,12 @@ export const IconBack = (p: P) => (
 export const IconWave = (p: P) => (
   <svg {...base(p)}><path d="M3 12h2l2-5 3 10 3-14 3 12 2-3h3" /></svg>
 )
+export const IconMoon = (p: P) => (
+  <svg {...base(p)}><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" /></svg>
+)
+export const IconDownload = (p: P) => (
+  <svg {...base(p)}><path d="M12 3v11" /><path d="m7.5 9.5 4.5 4.5 4.5-4.5" /><path d="M4 20h16" /></svg>
+)
+export const IconListPlus = (p: P) => (
+  <svg {...base(p)}><path d="M4 6h11M4 12h11M4 18h7" /><path d="M18 12v7M14.5 15.5h7" /></svg>
+)

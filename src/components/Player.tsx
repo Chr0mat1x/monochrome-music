@@ -20,6 +20,7 @@ import {
 } from './Icons'
 import { QueuePanel } from './QueuePanel'
 import { NowPlaying } from './NowPlaying'
+import { SleepTimer } from './SleepTimer'
 import { SourceBadge } from './TrackRow'
 
 function usePlaybackPosition(playing: boolean, trackId: string | null) {
@@ -69,15 +70,33 @@ export function Player() {
       if (e.code === 'Space') {
         e.preventDefault()
         togglePlay()
-      } else if (e.code === 'ArrowRight' && e.shiftKey) {
+      } else if (e.key === 'ArrowRight') {
+        engine.seek(engine.getPosition() + 5)
+      } else if (e.key === 'ArrowLeft') {
+        engine.seek(engine.getPosition() - 5)
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setVolume(Math.min(1, useStore.getState().volume + 0.05))
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setVolume(Math.max(0, useStore.getState().volume - 0.05))
+      } else if (e.key === 'm' || e.key === 'M' || e.key === 'ь') {
+        const m = !muted
+        setMuted(m)
+        setVolume(m ? 0 : 0.8)
+      } else if (e.key === 's' || e.key === 'S' || e.key === 'ы') {
+        toggleShuffle()
+      } else if (e.key === 'r' || e.key === 'R' || e.key === 'к') {
+        cycleRepeat()
+      } else if (e.code === 'KeyN') {
         next()
-      } else if (e.code === 'ArrowLeft' && e.shiftKey) {
+      } else if (e.code === 'KeyB') {
         prev()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [togglePlay, next, prev])
+  }, [togglePlay, next, prev, muted, setVolume, toggleShuffle, cycleRepeat])
 
   const shownPos = scrubbing ?? pos
   const shownProgress = duration ? (shownPos / duration) * 100 : 0
@@ -195,6 +214,7 @@ export function Player() {
             <div className="hidden h-8 w-24 items-end opacity-70 lg:flex">
               <Visualizer bars={22} mode="bars" className="h-full w-full" />
             </div>
+            <SleepTimer />
             <button
               className={`icon-btn h-8 w-8 ${queueOpen ? 'text-ink-100' : ''}`}
               onClick={() => setQueueOpen((v) => !v)}
