@@ -1,5 +1,5 @@
 import type { Track } from '../types'
-import { resolveAudiusStream } from './musicApi'
+import { resolveAudiusStream, resolveDeezerStream } from './musicApi'
 
 export interface EngineEvents {
   onEnded: () => void
@@ -80,15 +80,15 @@ export class AudioEngine {
     if (this.ctx && this.ctx.state === 'suspended') await this.ctx.resume()
   }
 
-  /** Resolve a playable URL for a track (Audius streams are signed lazily). */
+  /**
+   * Resolve a playable URL for a track. Audius and Deezer both sign their
+   * media URLs on demand and the signatures expire, so the result is never
+   * cached back onto the track — it is fetched fresh for each load.
+   */
   private async urlFor(track: Track): Promise<string | null> {
-    if (track.streamUrl) return track.streamUrl
-    if (track.source === 'audius') {
-      const url = await resolveAudiusStream(track.sourceId)
-      if (url) track.streamUrl = url
-      return url
-    }
-    return null
+    if (track.source === 'audius') return resolveAudiusStream(track.sourceId)
+    if (track.source === 'deezer') return resolveDeezerStream(track.sourceId)
+    return track.streamUrl
   }
 
   async load(track: Track, autoplay: boolean, seek = 0) {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Track } from '../types'
-import { searchAll, audiusTrending } from '../lib/musicApi'
+import { searchAll, audiusTrending, deezerChart } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
 import { Cover } from '../components/Cover'
@@ -69,6 +69,7 @@ export function Home() {
   const playContext = useStore((s) => s.playContext)
   const register = useStore((s) => s.register)
 
+  const [charts, setCharts] = useState<Track[]>([])
   const [trending, setTrending] = useState<Track[]>([])
   const [rows, setRows] = useState<{ title: string; tracks: Track[] }[]>([])
   const [loading, setLoading] = useState(true)
@@ -77,15 +78,17 @@ export function Home() {
     let cancelled = false
     setLoading(true)
     ;(async () => {
-      const [trend, ...rest] = await Promise.all([
+      const [chart, trend, ...rest] = await Promise.all([
+        deezerChart(18),
         audiusTrending(18),
         ...ROWS.map((r) => searchAll(r.query, 12)),
       ])
       if (cancelled) return
+      setCharts(chart)
       setTrending(trend)
       const built = ROWS.map((r, i) => ({ title: r.title, tracks: rest[i] ?? [] })).filter((r) => r.tracks.length)
       setRows(built)
-      register([...trend, ...built.flatMap((r) => r.tracks)])
+      register([...chart, ...trend, ...built.flatMap((r) => r.tracks)])
       setLoading(false)
     })()
     return () => {
@@ -94,7 +97,7 @@ export function Home() {
   }, [register])
 
   const quickPicks = playlists.slice(0, 6)
-  const allTracks = useMemo(() => [...trending, ...rows.flatMap((r) => r.tracks)], [trending, rows])
+  const allTracks = useMemo(() => [...charts, ...trending, ...rows.flatMap((r) => r.tracks)], [charts, trending, rows])
   const artists = useMemo(() => {
     const seen = new Map<string, { name: string; art: string | null }>()
     for (const t of allTracks) if (!seen.has(t.artist) && t.artwork) seen.set(t.artist, { name: t.artist, art: t.artwork })
@@ -198,7 +201,8 @@ export function Home() {
         </section>
       )}
 
-      {trending.length > 0 && <Row title="Тренды Audius · полные треки" tracks={trending} to="/library" />}
+      {charts.length > 0 && <Row title="Мировые чарты" tracks={charts} to="/library" />}
+      {trending.length > 0 && <Row title="Полные треки · Audius" tracks={trending} to="/library" />}
       {rows.map((r) => (
         <Row key={r.title} title={r.title} tracks={r.tracks} to={`/search?q=${encodeURIComponent(r.title)}`} />
       ))}

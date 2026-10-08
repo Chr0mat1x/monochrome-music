@@ -1,12 +1,20 @@
 import type { Album, Artist, Source, Track } from '../types'
 
 /* ------------------------------------------------------------------ *
- * Two real, CORS-enabled catalogues:
- *   - iTunes Search API  → commercial tracks, 30s official previews
- *   - Audius             → decentralised, CC-licensed full-length streams
- * Both are queried live; nothing is bundled.
+ * Three live, CORS-enabled catalogues:
+ *   - Deezer   → commercial tracks (Limp Bizkit, Coldplay…), 30s
+ *                previews, real artist photos and XL album art.
+ *   - iTunes   → commercial tracks, 30s official previews, artwork.
+ *   - Audius   → decentralised, CC-licensed FULL-LENGTH streams.
+ * Nothing is bundled; everything is queried live.
+ *
+ * Note on "full versions": mainstream labels only license 30-second
+ * previews to third-party apps for free. Full streams are therefore
+ * limited to Audius (independent / CC catalogue). Preview vs. full is
+ * surfaced in the UI via the `preview` flag.
  * ------------------------------------------------------------------ */
 
+const DEEZER = 'https://api.deezer.com'
 const ITUNES = 'https://itunes.apple.com'
 const AUDIUS_FALLBACK = 'https://discoveryprovider.audius.co'
 const APP_NAME = 'MONOCHROME'
@@ -20,12 +28,50 @@ function hash(str: string): number {
   return h >>> 0
 }
 
+async function jsonFetch<T = any>(url: string): Promise<T | null> {
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    return (await res.json()) as T
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The Deezer REST API does not send CORS headers, so browser fetch() is
+ * blocked. It does support JSONP, which sidesteps CORS entirely. We only use
+ * this for Deezer; everything else goes through fetch().
+ */
+let jsonpSeq = 0
+function jsonp<T = any>(url: string, timeout = 12000): Promise<T | null> {
+  return new Promise((resolve) => {
+    const name = `__mono_jsonp_${Date.now().toString(36)}_${jsonpSeq++}`
+    const script = document.createElement('script')
+    const finish = (value: T | null) => {
+      window.clearTimeout(timer)
+      try {
+        delete (window as any)[name]
+      } catch {
+        ;(window as any)[name] = undefined
+      }
+      script.remove()
+      resolve(value)
+    }
+    const timer = window.setTimeout(() => finish(null), timeout)
+    ;(window as any)[name] = (data: T) => finish(data)
+    script.onerror = () => finish(null)
+    const sep = url.includes('?') ? '&' : '?'
+    script.src = `${url}${sep}output=jsonp&callback=${name}`
+    document.head.appendChild(script)
+  })
+}
+
 /* ---------- Audius discovery host (cached) ---------- */
 let audiusHostPromise: Promise<string> | null = null
 async function audiusHost(): Promise<string> {
   if (!audiusHostPromise) {
-    audiusHostPromise = fetch('https://api.audius.co/')
-      .then((r) => r.json())
+    audiusHostPromise = jsonFetch<{ data: string[] }>('https://api.audius.co/')
       .then((d) => (Array.isArray(d?.data) && d.data[0]) || AUDIUS_FALLBACK)
       .catch(() => AUDIUS_FALLBACK)
   }
@@ -33,9 +79,8 @@ async function audiusHost(): Promise<string> {
 }
 
 /* ------------------------------------------------------------------ *
- * Attribute inference
- * Neither API exposes energy/valence/tempo, so the mood engine's inputs
- * are derived from genre keywords — the same axes the generator uses.
+ * Attribute inference — neither catalogue exposes energy/valence/tempo,
+ * so the mood engine's axes are derived from genre keywords.
  * ------------------------------------------------------------------ */
 interface GenreProfile {
   keys: string[]
@@ -48,16 +93,15 @@ interface GenreProfile {
 const GENRE_PROFILES: GenreProfile[] = [
   { keys: ['ambient', 'drone', 'new age', 'meditation', 'sleep', 'chillout'], energy: 14, valence: 54, bpm: 72, moods: ['спокойствие', 'медитация'] },
   { keys: ['lo-fi', 'lofi', 'chillhop', 'chill'], energy: 28, valence: 66, bpm: 84, moods: ['уют', 'учёба'] },
-  { keys: ['classical', 'orchestra', 'piano', 'soundtrack', 'score', 'instrumental'], energy: 30, valence: 48, bpm: 82, moods: ['кинематографично'] },
+  { keys: ['classical', 'orchestra', 'piano', 'soundtrack', 'score', 'instrumental', 'filmi'], energy: 30, valence: 48, bpm: 82, moods: ['кинематографично'] },
   { keys: ['jazz', 'blues', 'soul', 'easy listening', 'bossa'], energy: 42, valence: 52, bpm: 98, moods: ['нуар'] },
   { keys: ['folk', 'country', 'singer', 'acoustic', 'americana'], energy: 38, valence: 62, bpm: 92, moods: ['ностальгия'] },
-  { keys: ['metal', 'hardcore', 'punk', 'industrial', 'grunge'], energy: 95, valence: 24, bpm: 152, moods: ['агрессия', 'драйв'] },
+  { keys: ['metal', 'hardcore', 'punk', 'industrial', 'grunge', 'nu metal'], energy: 95, valence: 24, bpm: 152, moods: ['агрессия', 'драйв'] },
   { keys: ['rock', 'alternative', 'emo'], energy: 78, valence: 47, bpm: 128, moods: ['драйв'] },
-  { keys: ['techno', 'house', 'trance', 'edm', 'electronic', 'dance', 'club', 'drum & bass', 'dubstep', 'breakbeat', 'edm'], energy: 91, valence: 70, bpm: 142, moods: ['клуб', 'движение'] },
-  { keys: ['hip-hop', 'hip hop', 'rap', 'trap', 'drill', 'grime'], energy: 70, valence: 52, bpm: 96, moods: ['энергия'] },
-  { keys: ['r&b', 'rnb', 'neo soul'], energy: 52, valence: 64, bpm: 100, moods: ['романтика'] },
-  { keys: ['k-pop', 'j-pop', 'anime', 'cantopop', 'mandopop'], energy: 82, valence: 84, bpm: 130, moods: ['энергия'] },
-  { keys: ['reggae', 'dancehall', 'latin', 'afrobeat', 'afro'], energy: 64, valence: 80, bpm: 102, moods: ['лето'] },
+  { keys: ['techno', 'house', 'trance', 'edm', 'electronic', 'dance', 'club', 'drum & bass', 'dubstep', 'breakbeat', 'electro', 'dancehall'], energy: 91, valence: 70, bpm: 142, moods: ['клуб', 'движение'] },
+  { keys: ['hip-hop', 'hip hop', 'rap', 'trap', 'drill', 'grime', 'r&b', 'rnb'], energy: 68, valence: 55, bpm: 96, moods: ['энергия'] },
+  { keys: ['k-pop', 'j-pop', 'anime', 'cantopop', 'mandopop', 'kpop'], energy: 82, valence: 84, bpm: 130, moods: ['энергия'] },
+  { keys: ['reggae', 'latin', 'afrobeat', 'afro', 'salsa'], energy: 64, valence: 80, bpm: 102, moods: ['лето'] },
   { keys: ['holiday', 'christmas', 'gospel', 'christian'], energy: 50, valence: 72, bpm: 104, moods: ['надежда'] },
   { keys: ['pop'], energy: 68, valence: 82, bpm: 118, moods: ['радость'] },
 ]
@@ -67,19 +111,193 @@ const DEFAULT_PROFILE: GenreProfile = { keys: [], energy: 56, valence: 58, bpm: 
 export function inferProfile(genre: string, seedInput: string) {
   const g = (genre || '').toLowerCase()
   const profile = GENRE_PROFILES.find((p) => p.keys.some((k) => g.includes(k))) ?? DEFAULT_PROFILE
-  const h = hash(seedInput)
-  const jitter = ((h % 21) - 10) // -10..+10
+  const jitter = (hash(seedInput) % 21) - 10
   return {
     energy: Math.max(2, Math.min(100, profile.energy + Math.round(jitter / 2))),
     valence: Math.max(2, Math.min(100, profile.valence + Math.round(jitter / 2))),
     bpm: Math.max(55, profile.bpm + jitter),
     moods: profile.moods,
-    seed: h,
+    seed: hash(seedInput),
   }
 }
 
 /* ------------------------------------------------------------------ *
- * Mappers
+ * Deezer
+ * ------------------------------------------------------------------ */
+const DZ_GENRE: Record<number, string> = {
+  52: 'Hip-Hop/Rap',
+  116: 'Rap',
+  132: 'Pop',
+  152: 'Rock',
+  165: 'R&B',
+  85: 'Alternative',
+  106: 'Electro',
+  113: 'Dance',
+  129: 'Jazz',
+  144: 'Reggae',
+  173: 'Classical',
+  464: 'Metal',
+  466: 'Folk',
+}
+
+/**
+ * Track payloads embed the artist's portrait; remember it so artist pages can
+ * show a real photo without a separate (rate-limited) artist lookup.
+ */
+const artistPictures = new Map<string, string>()
+function rememberArtistPicture(name?: string, pic?: string | null) {
+  if (name && pic) artistPictures.set(name.toLowerCase(), pic)
+}
+
+/** Portrait photo for an artist name, from cache or a live Deezer lookup. */
+export async function deezerArtistPicture(name: string): Promise<string | null> {
+  const cached = artistPictures.get(name.toLowerCase())
+  if (cached) return cached
+  const info = await deezerArtistInfo(name)
+  return info?.picture ?? null
+}
+
+function mapDeezer(t: any): Track | null {
+  if (!t || !t.id || !t.title) return null
+  rememberArtistPicture(t.artist?.name, t.artist?.picture_xl || t.artist?.picture_big || t.artist?.picture_medium)
+  const artist = t.artist?.name || t.artist?.id ? t.artist?.name || 'Unknown' : 'Unknown'
+  const album = t.album?.title || `${artist} — синглы`
+  const genre = (t.genre_id && DZ_GENRE[t.genre_id]) || inferGenreFromContext(t) || ''
+  const year = t.release_date ? new Date(t.release_date).getFullYear() : new Date().getFullYear()
+  const profile = inferProfile(genre, `${t.title}${artist}`)
+  return {
+    id: `dz-${t.id}`,
+    title: t.title,
+    artist,
+    album,
+    duration: t.duration ?? 30,
+    genre,
+    year,
+    mood: profile.moods,
+    energy: profile.energy,
+    valence: profile.valence,
+    bpm: profile.bpm,
+    seed: profile.seed,
+    source: 'deezer' as Source,
+    streamUrl: null, // resolved lazily: Deezer previews are signed and expire
+    artwork: t.album?.cover_xl || t.album?.cover_big || t.album?.cover_medium || null,
+    preview: true,
+    sourceId: String(t.id),
+    permalink: t.link ?? null,
+  }
+}
+
+/** Deezer only returns genre_id on some endpoints; guess otherwise. */
+function inferGenreFromContext(t: any): string {
+  const hay = `${t.title} ${t.album?.title ?? ''}`.toLowerCase()
+  const guess = GENRE_PROFILES.find((p) => p.keys.some((k) => hay.includes(k)))
+  return guess && guess.keys[0] ? guess.keys[0] : ''
+}
+
+export async function searchDeezer(term: string, limit = 25): Promise<Track[]> {
+  if (!term.trim()) return []
+  const data = await jsonp<{ data: any[] }>(`${DEEZER}/search/track?q=${encodeURIComponent(term)}&limit=${limit}`)
+  return (data?.data ?? []).map(mapDeezer).filter(Boolean) as Track[]
+}
+
+export async function deezerTopTracks(artistId: string, limit = 50): Promise<Track[]> {
+  const data = await jsonp<{ data: any[] }>(`${DEEZER}/artist/${artistId}/top?limit=${limit}`)
+  return (data?.data ?? []).map(mapDeezer).filter(Boolean) as Track[]
+}
+
+export async function deezerAlbumTracks(albumId: string): Promise<Track[]> {
+  const data = await jsonp<{ data: any[] }>(`${DEEZER}/album/${albumId}/tracks?limit=100`)
+  return (data?.data ?? []).map(mapDeezer).filter(Boolean) as Track[]
+}
+
+export async function deezerChart(limit = 25): Promise<Track[]> {
+  const data = await jsonp<{ data: any[] }>(`${DEEZER}/chart/0/tracks?limit=${limit}`)
+  return (data?.data ?? []).map(mapDeezer).filter(Boolean) as Track[]
+}
+
+export interface DeezerArtistInfo {
+  id: string
+  name: string
+  picture: string | null
+  fans: number
+  albums: number
+}
+
+export async function deezerArtistInfo(name: string): Promise<DeezerArtistInfo | null> {
+  const data = await jsonp<{ data: any[] }>(`${DEEZER}/search/artist?q=${encodeURIComponent(name)}&limit=1`)
+  const a = data?.data?.[0]
+  if (!a) return null
+  return {
+    id: String(a.id),
+    name: a.name,
+    picture: a.picture_xl || a.picture_big || a.picture_medium || null,
+    fans: a.nb_fan ?? 0,
+    albums: a.nb_album ?? 0,
+  }
+}
+
+export interface DeezerAlbumInfo {
+  id: string
+  title: string
+  year: number
+  artwork: string | null
+}
+
+/**
+ * Look an album up by name (not by id) so its real release year and cover
+ * are available — the track payloads do not carry those.
+ */
+export async function deezerFindAlbum(artistName: string, albumTitle: string): Promise<{ info: DeezerAlbumInfo; tracks: Track[] } | null> {
+  const q = `${artistName} ${albumTitle}`.trim()
+  const data = await jsonp<{ data: any[] }>(`${DEEZER}/search/album?q=${encodeURIComponent(q)}&limit=8`)
+  const wanted = albumTitle.toLowerCase()
+  const candidate =
+    (data?.data ?? []).find((a) => a?.title && a.title.toLowerCase() === wanted) ??
+    (data?.data ?? []).find((a) => a?.title && (a.title.toLowerCase().includes(wanted) || wanted.includes(a.title.toLowerCase())))
+  if (!candidate) return null
+  const id = String(candidate.id)
+  // the search payload omits release_date; the album detail endpoint has it
+  const [tracks, detail] = await Promise.all([
+    deezerAlbumTracks(id),
+    jsonp<{ release_date?: string; cover_xl?: string; cover_big?: string }>(`${DEEZER}/album/${id}`),
+  ])
+  return {
+    info: {
+      id,
+      title: candidate.title,
+      year: detail?.release_date ? new Date(detail.release_date).getFullYear() : 0,
+      artwork:
+        detail?.cover_xl ||
+        detail?.cover_big ||
+        candidate.cover_xl ||
+        candidate.cover_big ||
+        candidate.cover_medium ||
+        null,
+    },
+    tracks,
+  }
+}
+
+export async function deezerArtistAlbums(artistId: string, limit = 50): Promise<DeezerAlbumInfo[]> {
+  const data = await jsonp<{ data: any[] }>(`${DEEZER}/artist/${artistId}/albums?limit=${limit}`)
+  return (data?.data ?? [])
+    .filter((a) => a?.title)
+    .map((a) => ({
+      id: String(a.id),
+      title: a.title,
+      year: a.release_date ? new Date(a.release_date).getFullYear() : 0,
+      artwork: a.cover_xl || a.cover_big || a.cover_medium || null,
+    }))
+}
+
+/** Resolve the (signed, expiring) Deezer preview URL at play time. */
+export async function resolveDeezerStream(trackId: string): Promise<string | null> {
+  const data = await jsonp<{ preview?: string }>(`${DEEZER}/track/${trackId}`)
+  return data?.preview ?? null
+}
+
+/* ------------------------------------------------------------------ *
+ * iTunes
  * ------------------------------------------------------------------ */
 function mapItunes(r: any): Track | null {
   if (!r || r.wrapperType !== 'track' || !r.previewUrl) return null
@@ -101,13 +319,22 @@ function mapItunes(r: any): Track | null {
     seed: profile.seed,
     source: 'itunes' as Source,
     streamUrl: r.previewUrl,
-    artwork: r.artworkUrl100 ? r.artworkUrl100.replace('100x100bb', '600x600bb') : null,
+    artwork: r.artworkUrl100 ? r.artworkUrl100.replace('100x100bb', '1000x1000bb') : null,
     preview: true,
     sourceId: String(r.trackId),
     permalink: r.trackViewUrl ?? null,
   }
 }
 
+export async function searchItunes(term: string, limit = 25): Promise<Track[]> {
+  if (!term.trim()) return []
+  const data = await jsonFetch<{ results: any[] }>(`${ITUNES}/search?term=${encodeURIComponent(term)}&entity=song&limit=${limit}`)
+  return (data?.results ?? []).map(mapItunes).filter(Boolean) as Track[]
+}
+
+/* ------------------------------------------------------------------ *
+ * Audius — full-length, CC-licensed streams
+ * ------------------------------------------------------------------ */
 function pickArtwork(art: any): string | null {
   if (!art) return null
   return art['1000x1000'] || art['480x480'] || art['150x150'] || null
@@ -133,7 +360,7 @@ function mapAudius(t: any): Track | null {
     bpm: profile.bpm,
     seed: profile.seed,
     source: 'audius' as Source,
-    streamUrl: null, // resolved lazily on play
+    streamUrl: null,
     artwork: pickArtwork(t.artwork),
     preview: false,
     sourceId: String(t.id),
@@ -141,54 +368,19 @@ function mapAudius(t: any): Track | null {
   }
 }
 
-/* ------------------------------------------------------------------ *
- * iTunes
- * ------------------------------------------------------------------ */
-export async function searchItunes(term: string, limit = 25): Promise<Track[]> {
-  if (!term.trim()) return []
-  const url = `${ITUNES}/search?term=${encodeURIComponent(term)}&entity=song&limit=${limit}`
-  const res = await fetch(url)
-  if (!res.ok) return []
-  const data = await res.json()
-  return (data.results ?? []).map(mapItunes).filter(Boolean) as Track[]
-}
-
-export async function itunesAlbumTracks(collectionId: string): Promise<Track[]> {
-  const url = `${ITUNES}/lookup?id=${collectionId}&entity=song&limit=200`
-  const res = await fetch(url)
-  if (!res.ok) return []
-  const data = await res.json()
-  return (data.results ?? []).map(mapItunes).filter(Boolean) as Track[]
-}
-
-/* ------------------------------------------------------------------ *
- * Audius
- * ------------------------------------------------------------------ */
 export async function searchAudius(query: string, limit = 25): Promise<Track[]> {
   if (!query.trim()) return []
   const host = await audiusHost()
-  const url = `${host}/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}&app_name=${APP_NAME}`
-  try {
-    const res = await fetch(url)
-    if (!res.ok) return []
-    const data = await res.json()
-    return (data.data ?? []).map(mapAudius).filter(Boolean) as Track[]
-  } catch {
-    return []
-  }
+  const data = await jsonFetch<{ data: any[] }>(`${host}/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}&app_name=${APP_NAME}`)
+  return (data?.data ?? []).map(mapAudius).filter(Boolean) as Track[]
 }
 
 export async function audiusTrending(limit = 25, genre = ''): Promise<Track[]> {
   const host = await audiusHost()
-  const url = `${host}/v1/tracks/trending?limit=${limit}&app_name=${APP_NAME}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
-  try {
-    const res = await fetch(url)
-    if (!res.ok) return []
-    const data = await res.json()
-    return (data.data ?? []).map(mapAudius).filter(Boolean) as Track[]
-  } catch {
-    return []
-  }
+  const data = await jsonFetch<{ data: any[] }>(
+    `${host}/v1/tracks/trending?limit=${limit}&app_name=${APP_NAME}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`,
+  )
+  return (data?.data ?? []).map(mapAudius).filter(Boolean) as Track[]
 }
 
 export async function resolveAudiusStream(trackId: string): Promise<string | null> {
@@ -197,30 +389,38 @@ export async function resolveAudiusStream(trackId: string): Promise<string | nul
 }
 
 /* ------------------------------------------------------------------ *
- * Combined search — interleave both catalogues, dedupe by title+artist
+ * Combined search — Deezer first (best coverage + images), then
+ * interleave iTunes and Audius, deduped by title+artist.
  * ------------------------------------------------------------------ */
 export async function searchAll(query: string, limit = 40): Promise<Track[]> {
-  const [it, au] = await Promise.all([
-    searchItunes(query, Math.ceil(limit / 2)).catch(() => []),
-    searchAudius(query, Math.ceil(limit / 2)).catch(() => []),
+  const per = Math.ceil(limit / 3)
+  const [dz, it, au] = await Promise.all([
+    searchDeezer(query, per).catch(() => []),
+    searchItunes(query, per).catch(() => []),
+    searchAudius(query, per).catch(() => []),
   ])
+
   const seen = new Set<string>()
   const out: Track[] = []
-  const max = Math.max(it.length, au.length)
-  for (let i = 0; i < max && out.length < limit; i++) {
-    for (const t of [it[i], au[i]]) {
-      if (!t) continue
-      const key = `${t.title.toLowerCase()}|${t.artist.toLowerCase()}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      out.push(t)
-    }
+  const push = (t?: Track) => {
+    if (!t || out.length >= limit) return
+    const key = `${t.title.toLowerCase()}|${t.artist.toLowerCase()}`
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push(t)
+  }
+
+  const max = Math.max(dz.length, it.length, au.length)
+  for (let i = 0; i < max; i++) {
+    push(dz[i])
+    push(it[i])
+    push(au[i])
   }
   return out
 }
 
 /* ------------------------------------------------------------------ *
- * Artist / album lookups
+ * Artist / album helpers
  * ------------------------------------------------------------------ */
 function titleCase(s: string) {
   return s
@@ -230,16 +430,23 @@ function titleCase(s: string) {
 }
 
 export async function getArtist(name: string): Promise<{ artist: Artist; tracks: Track[]; albums: Album[] }> {
-  const tracks = await searchAll(name, 40)
+  const info = await deezerArtistInfo(name)
+  let tracks: Track[] = []
+  if (info) {
+    tracks = await deezerTopTracks(info.id, 50)
+  }
+  if (!tracks.length) {
+    const [it, au] = await Promise.all([searchItunes(name, 25).catch(() => []), searchAudius(name, 25).catch(() => [])])
+    tracks = [...it, ...au]
+  }
   const own = tracks.filter((t) => t.artist.toLowerCase() === name.toLowerCase())
   const pool = own.length >= 4 ? own : tracks
 
   const albumMap = new Map<string, Album>()
   for (const t of pool) {
     if (!t.album) continue
-    const key = t.album
-    if (!albumMap.has(key)) {
-      albumMap.set(key, {
+    if (!albumMap.has(t.album)) {
+      albumMap.set(t.album, {
         id: `al-${t.source}-${hash(t.artist + t.album)}`,
         title: t.album,
         artist: t.artist,
@@ -249,31 +456,78 @@ export async function getArtist(name: string): Promise<{ artist: Artist; tracks:
         genre: t.genre,
       })
     }
-    albumMap.get(key)!.trackIds.push(t.id)
+    albumMap.get(t.album)!.trackIds.push(t.id)
   }
 
-  const profile = pool[0] ? inferProfile(pool[0].genre, name) : inferProfile('', name)
+  // real discography with release years and covers, straight from Deezer
+  const realAlbums = info ? await deezerArtistAlbums(info.id, 50).catch(() => []) : []
+  const albumArt = new Map<string, string>()
+  for (const a of realAlbums) if (a.artwork) albumArt.set(a.title.toLowerCase(), a.artwork)
+
   const artist: Artist = {
-    id: `ar-${hash(name)}`,
+    id: info?.id ? `ar-dz-${info.id}` : `ar-${hash(name)}`,
     name,
     genres: Array.from(new Set(pool.map((t) => t.genre).filter(Boolean))).slice(0, 3),
-    bio: `${titleCase(name)} — реальный артист из каталогов iTunes и Audius. Здесь собраны доступные треки и релизы, найденные вживую по запросу.`,
-    monthly: 100_000 + (hash(name) % 4_000_000),
-    picture: pool.find((t) => t.artwork)?.artwork ?? null,
+    bio: `${titleCase(name)} — реальный артист из каталогов Deezer, iTunes и Audius. Здесь собраны доступные треки и релизы, найденные вживую по запросу.`,
+    monthly: info?.fans && info.fans > 0 ? info.fans : 100_000 + (hash(name) % 4_000_000),
+    // prefer a real portrait; fall back to album art only if none exists
+    picture: info?.picture ?? artistPictures.get(name.toLowerCase()) ?? pool.find((t) => t.artwork)?.artwork ?? null,
   }
-  return { artist, tracks: pool, albums: Array.from(albumMap.values()).filter((a) => a.trackIds.length >= 2) }
+  const albums: Album[] = realAlbums.length
+    ? realAlbums.slice(0, 12).map((a) => {
+        // link to the album page so its full tracklist is fetched on demand
+        const known = pool.filter((t) => t.album.toLowerCase() === a.title.toLowerCase())
+        return {
+          id: `al-dz-${a.id}`,
+          title: a.title,
+          artist: name,
+          year: a.year || pool.find((t) => t.album.toLowerCase() === a.title.toLowerCase())?.year || 0,
+          trackIds: known.map((t) => t.id),
+          artwork: a.artwork,
+          genre: known[0]?.genre ?? pool[0]?.genre ?? '',
+        }
+      })
+    : Array.from(albumMap.values()).filter((a) => a.trackIds.length >= 2)
+
+  // backfill artwork for albums that only had a name from the track list
+  for (const a of albums) if (!a.artwork) a.artwork = albumArt.get(a.title.toLowerCase()) ?? null
+
+  return { artist, tracks: pool, albums }
 }
 
-export async function getAlbum(albumId: string): Promise<{ album: Album; tracks: Track[] } | null> {
-  // albumId format: al-{source}-{hash}
-  const [, source] = albumId.split('-')
-  return null // albums are resolved from live search context instead
+export async function getAlbum(
+  artistName: string,
+  albumTitle: string,
+): Promise<{ tracks: Track[]; artwork: string | null; year: number }> {
+  // Prefer the real Deezer album: it yields the exact tracklist, cover and year.
+  const dz = await deezerFindAlbum(artistName, albumTitle).catch(() => null)
+  if (dz && dz.tracks.length) {
+    const merged = mergeArtwork(dz.tracks, dz.info.artwork)
+    return { tracks: merged, artwork: dz.info.artwork ?? merged.find((t) => t.artwork)?.artwork ?? null, year: dz.info.year }
+  }
+
+  const [it, au] = await Promise.all([
+    searchItunes(`${artistName} ${albumTitle}`, 50).catch(() => []),
+    searchAudius(`${artistName} ${albumTitle}`, 50).catch(() => []),
+  ])
+  const all = [...it, ...au]
+  const exact = all.filter(
+    (t) => t.album.toLowerCase().includes(albumTitle.toLowerCase()) || t.title.toLowerCase().includes(albumTitle.toLowerCase()),
+  )
+  const seen = new Set<string>()
+  const list: Track[] = []
+  for (const t of exact.length ? exact : all) {
+    const key = `${t.title.toLowerCase()}|${t.artist.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    list.push(t)
+  }
+  const artwork = list.find((t) => t.artwork)?.artwork ?? null
+  return { tracks: list, artwork, year: list[0]?.year ?? 0 }
 }
 
-export function albumKeyFor(track: Track): string {
-  return `al-${track.source}-${hash(track.artist + track.album)}`
-}
-
-export function albumIdFromTrack(track: Track): string {
-  return albumKeyFor(track)
+/** Give tracks without their own cover the album's cover. */
+function mergeArtwork(tracks: Track[], artwork: string | null): Track[] {
+  if (!artwork) return tracks
+  return tracks.map((t) => (t.artwork ? t : { ...t, artwork }))
 }

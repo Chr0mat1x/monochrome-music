@@ -1,7 +1,7 @@
 export type Mode = 'major' | 'minor' | 'dorian' | 'lydian' | 'mixolydian' | 'phrygian'
 
 /** Which upstream catalogue a track came from. */
-export type Source = 'itunes' | 'audius'
+export type Source = 'deezer' | 'itunes' | 'audius'
 
 export interface Track {
   id: string

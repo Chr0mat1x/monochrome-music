@@ -15,9 +15,17 @@ function fmt(sec: number): string {
 
 /** Contextual source badge — previews vs. full streams. */
 export function SourceBadge({ track }: { track: Track }) {
-  const label = track.preview ? 'PREVIEW' : 'AUDIUS · FULL'
+  const label = track.preview ? 'ПРЕВЬЮ 30С' : 'ПОЛНЫЙ ТРЕК'
+  const title = track.preview
+    ? 'Официальное 30-секундное превью из коммерческого каталога'
+    : 'Полная версия (Audius, свободная лицензия)'
   return (
-    <span className="rounded-sm border border-ink-40 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ink-60">
+    <span
+      title={title}
+      className={`shrink-0 rounded-sm border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${
+        track.preview ? 'border-ink-40 text-ink-60' : 'border-ink-100 text-ink-100'
+      }`}
+    >
       {label}
     </span>
   )

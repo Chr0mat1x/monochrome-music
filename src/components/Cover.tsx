@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 function hash(str: string): number {
   let h = 2166136261
@@ -120,21 +120,40 @@ interface CoverProps {
   alt?: string
 }
 
-/** Real cover art when available, monochrome generative art otherwise. */
+/**
+ * Real cover art when available, monochrome generative art otherwise.
+ * The image fades in over the placeholder so there is never an empty box
+ * while the catalogue CDN responds, and it degrades gracefully on error.
+ */
 export function Cover({ seed, artwork, tone = 40, className = '', rounded = 'rounded-md', alt = '' }: CoverProps) {
+  const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
-  const showImage = artwork && !failed
+
+  // Reset when the artwork source changes (rows recycle components).
+  useEffect(() => {
+    setLoaded(false)
+    setFailed(false)
+  }, [artwork])
+
+  const showImage = Boolean(artwork) && !failed
 
   return (
     <div className={`relative overflow-hidden ${rounded} ${className} bg-ink-15`}>
       {showImage ? (
-        <img
-          src={artwork}
-          alt={alt}
-          loading="lazy"
-          onError={() => setFailed(true)}
-          className={`h-full w-full object-cover ${rounded}`}
-        />
+        <>
+          <GenerativeCover seed={seed} tone={tone} rounded={rounded} className="absolute inset-0 h-full w-full" />
+          <img
+            src={artwork as string}
+            alt={alt}
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setLoaded(true)}
+            onError={() => setFailed(true)}
+            className={`absolute inset-0 h-full w-full object-cover ${rounded} transition-opacity duration-500 ${
+              loaded ? 'opacity-100' : 'opacity-0'
+            }`}
+          />
+        </>
       ) : (
         <GenerativeCover seed={seed} tone={tone} rounded={rounded} className="h-full w-full" />
       )}

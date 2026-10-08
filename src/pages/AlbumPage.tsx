@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { Track } from '../types'
-import { searchItunes, searchAudius } from '../lib/musicApi'
+import { getAlbum } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { Cover } from '../components/Cover'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
@@ -19,6 +19,7 @@ export function AlbumPage() {
   }, [id])
 
   const [tracks, setTracks] = useState<Track[]>([])
+  const [year, setYear] = useState(0)
   const [loading, setLoading] = useState(true)
   const playContext = useStore((s) => s.playContext)
   const register = useStore((s) => s.register)
@@ -30,23 +31,11 @@ export function AlbumPage() {
     let cancelled = false
     setLoading(true)
     ;(async () => {
-      const [it, au] = await Promise.all([searchItunes(`${artistName} ${albumTitle}`, 50), searchAudius(`${artistName} ${albumTitle}`, 50)])
+      const { tracks, year } = await getAlbum(artistName, albumTitle)
       if (cancelled) return
-      const all = [...it, ...au]
-      const exact = all.filter(
-        (t) => t.album.toLowerCase().includes(albumTitle.toLowerCase()) || t.title.toLowerCase().includes(albumTitle.toLowerCase()),
-      )
-      // dedupe, keep an ordered tracklist
-      const seen = new Set<string>()
-      const list: Track[] = []
-      for (const t of exact.length ? exact : all) {
-        const key = `${t.title.toLowerCase()}|${t.artist.toLowerCase()}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        list.push(t)
-      }
-      setTracks(list)
-      register(list)
+      setTracks(tracks)
+      setYear(year)
+      register(tracks)
       setLoading(false)
     })()
     return () => {
@@ -76,7 +65,7 @@ export function AlbumPage() {
             <Link to={`/artist/${encodeURIComponent(artistName)}`} className="font-semibold hover:underline">
               {artistName}
             </Link>{' '}
-            {tracks.length > 0 && <>· {tracks[0].year} · {tracks.length} треков · {formatTotal(total)}</>}
+            {tracks.length > 0 && <>· {year || tracks[0].year} · {tracks.length} треков · {formatTotal(total)}</>}
           </p>
         </div>
       </div>

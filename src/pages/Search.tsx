@@ -6,6 +6,7 @@ import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
 import { TrackRow, TrackListHeader, SourceBadge } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
+import { deezerArtistPicture } from '../lib/musicApi'
 import { IconSearch } from '../components/Icons'
 
 const HOT = ['The Weeknd', 'Coldplay', 'lofi', 'techno', 'jazz', 'Billie Eilish', 'rock', 'ambient', 'rap', 'классика']
@@ -41,14 +42,24 @@ export function Search() {
       setResults(tracks)
       register(tracks)
 
-      // derive an artist list from result diversity
+      // derive an artist list from result diversity, then swap in real
+      // portrait photos from Deezer where available
       const seen = new Map<string, { name: string; art: string | null; genres: string[] }>()
       for (const t of tracks) {
         if (!seen.has(t.artist))
           seen.set(t.artist, { name: t.artist, art: t.artwork, genres: [t.genre].filter(Boolean) })
       }
-      setArtists(Array.from(seen.values()).slice(0, 6))
+      const base = Array.from(seen.values()).slice(0, 6)
+      setArtists(base)
       setBusy(false)
+
+      const withPhotos = await Promise.all(
+        base.map(async (a) => {
+          const pic = await deezerArtistPicture(a.name).catch(() => null)
+          return { ...a, art: pic ?? a.art }
+        }),
+      )
+      if (!cancelled) setArtists(withPhotos)
     }, 350)
     return () => {
       cancelled = true
@@ -98,7 +109,7 @@ export function Search() {
       </div>
 
       <p className="mt-2 text-[11px] uppercase tracking-widest text-ink-50">
-        Источники: iTunes (превью 30с) · Audius (полные треки)
+        Источники: Deezer · iTunes (превью 30с) · Audius (полные треки)
       </p>
 
       <div className="mt-4 flex flex-wrap gap-2">

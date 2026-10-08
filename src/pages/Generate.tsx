@@ -60,7 +60,7 @@ export function Generate() {
     register(scored)
     setResult({
       name: query.title || text.slice(0, 40),
-      description: `Сгенерировано по описанию: «${text.trim()}». Найдено ${scored.length} реальных треков в каталогах iTunes и Audius.`,
+      description: `Сгенерировано по описанию: «${text.trim()}». Найдено ${scored.length} реальных треков в каталогах Deezer, iTunes и Audius.`,
       query,
       tracks: scored,
     })
