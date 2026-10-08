@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-0 text-ink-95 antialiased;
+  font-feature-settings: 'ss01', 'cv01';
+  overflow: hidden;
+}
+
+/* ---------- scrollbars ---------- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2e2e2e;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a;
+  background-clip: content-box;
+}
+
+/* ---------- selection ---------- */
+::selection {
+  background: #ffffff;
+  color: #000000;
+}
+
+/* ---------- focus ---------- */
+:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+@layer components {
+  .grain {
+    position: relative;
+  }
+  .grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+    mix-blend-mode: overlay;
+  }
+
+  .card-hover {
+    @apply transition-all duration-300 ease-out;
+  }
+  .card-hover:hover {
+    @apply bg-ink-20;
+  }
+
+  .icon-btn {
+    @apply grid place-items-center rounded-full text-ink-70 transition-colors duration-200 hover:text-ink-100;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-ink-30 px-3 py-1 text-xs font-medium uppercase tracking-wider text-ink-70 transition-colors duration-200 hover:border-ink-100 hover:text-ink-100;
+  }
+  .chip-active {
+    @apply border-ink-100 bg-ink-100 text-ink-0;
+  }
+
+  .hairline {
+    @apply border-ink-25;
+  }
+}
+
+/* range input (seek + volume) */
+input[type='range'].mono-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+input[type='range'].mono-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    #ffffff var(--fill, 0%),
+    #3d3d3d var(--fill, 0%)
+  );
+}
+input[type='range'].mono-range::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: #3d3d3d;
+}
+input[type='range'].mono-range::-moz-range-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: #ffffff;
+}
+input[type='range'].mono-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  width: 12px;
+  margin-top: -4.5px;
+  border-radius: 999px;
+  background: #ffffff;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+input[type='range'].mono-range:hover::-webkit-slider-thumb,
+input[type='range'].mono-range:focus::-webkit-slider-thumb {
+  opacity: 1;
+}
+input[type='range'].mono-range::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border: none;
+  border-radius: 999px;
+  background: #ffffff;
+  opacity: 0;
+}
+input[type='range'].mono-range:hover::-moz-range-thumb {
+  opacity: 1;
+}
+
+.marquee-track {
+  animation: marquee 14s linear infinite;
+}
+@keyframes marquee {
+  0%, 12% { transform: translateX(0); }
+  88%, 100% { transform: translateX(calc(-100% + 200px)); }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
