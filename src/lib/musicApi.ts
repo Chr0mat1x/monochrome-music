@@ -19,6 +19,19 @@ const ITUNES = 'https://itunes.apple.com'
 const AUDIUS_FALLBACK = 'https://discoveryprovider.audius.co'
 const APP_NAME = 'MONOCHROME'
 
+/**
+ * Piped instances expose a keyless, CORS-enabled search over the YouTube
+ * catalogue. We only use them to find a videoId; playback happens through the
+ * official YouTube IFrame player, so nothing is scraped or proxied.
+ * Instances go down often, hence the fallback list.
+ */
+const PIPED_HOSTS = [
+  'https://api.piped.private.coffee',
+  'https://pipedapi.ducks.party',
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.adminforge.de',
+]
+
 function hash(str: string): number {
   let h = 2166136261
   for (let i = 0; i < str.length; i++) {
@@ -28,13 +41,17 @@ function hash(str: string): number {
   return h >>> 0
 }
 
-async function jsonFetch<T = any>(url: string): Promise<T | null> {
+async function jsonFetch<T = any>(url: string, timeout = 12000): Promise<T | null> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeout)
   try {
-    const res = await fetch(url)
+    const res = await fetch(url, { signal: ctrl.signal })
     if (!res.ok) return null
     return (await res.json()) as T
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -393,14 +410,120 @@ export async function resolveAudiusStream(trackId: string): Promise<string | nul
 }
 
 /* ------------------------------------------------------------------ *
+ * YouTube (via Piped) — FULL-LENGTH playback for mainstream music.
+ * Piped is only asked for a videoId; the audio is played by the official
+ * YouTube IFrame player, which is what keeps this on the right side of the
+ * platform's terms (no stream extraction, no proxying).
+ * ------------------------------------------------------------------ */
+interface PipedItem {
+  url?: string
+  type?: string
+  title?: string
+  uploaderName?: string
+  duration?: number
+  thumbnail?: string
+}
+
+function pipedVideoId(item: PipedItem): string | null {
+  const fromUrl = item.url?.match(/[?&]v=([\w-]{11})/)?.[1]
+  if (fromUrl) return fromUrl
+  const bare = item.url?.match(/^([\w-]{11})$/)
+  return bare ? bare[1] : null
+}
+
+/** Rewrite a proxied Piped thumbnail to the original YouTube host. */
+function pipedThumb(item: PipedItem): string | null {
+  const id = pipedVideoId(item)
+  if (id) return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
+  const thumb = item.thumbnail
+  if (!thumb) return null
+  try {
+    const host = new URL(thumb).searchParams.get('host')
+    const path = new URL(thumb).pathname.replace(/^\//, '')
+    if (host) return `https://${host}/${path}`
+  } catch {
+    /* keep the original below */
+  }
+  return thumb
+}
+
+function mapYouTube(item: PipedItem): Track | null {
+  const id = pipedVideoId(item)
+  if (!id || !item.title) return null
+  const artist = item.uploaderName || 'YouTube'
+  const genre = inferGenreFromContext({ title: item.title })
+  const profile = inferProfile(genre, `${item.title}${artist}`)
+  return {
+    id: `yt-${id}`,
+    title: item.title,
+    artist,
+    album: `${artist} — YouTube`,
+    duration: item.duration ?? 0,
+    genre,
+    year: new Date().getFullYear(),
+    mood: profile.moods,
+    energy: profile.energy,
+    valence: profile.valence,
+    bpm: profile.bpm,
+    seed: profile.seed,
+    source: 'youtube' as Source,
+    streamUrl: null, // played through the IFrame player, not an audio element
+    artwork: pipedThumb(item),
+    preview: false,
+    sourceId: id,
+    permalink: `https://www.youtube.com/watch?v=${id}`,
+  }
+}
+
+export async function searchYouTube(query: string, limit = 25): Promise<Track[]> {
+  if (!query.trim()) return []
+  for (const host of PIPED_HOSTS) {
+    const data = await jsonFetch<{ items?: PipedItem[] }>(
+      `${host}/search?q=${encodeURIComponent(query)}&filter=music_songs`,
+      6000,
+    )
+    const items = (data?.items ?? []).filter((i) => i.type === 'stream')
+    if (items.length) return items.slice(0, limit).map(mapYouTube).filter(Boolean) as Track[]
+  }
+  return []
+}
+
+/** Look up the full-length YouTube video that matches a Deezer/iTunes track. */
+export async function findYouTubeTrack(artist: string, title: string): Promise<Track | null> {
+  const query = `${artist} ${title}`
+  const results = await searchYouTube(query, 8)
+  if (!results.length) return null
+  const clean = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\s+/g, ' ').trim()
+  const wantTitle = clean(title)
+  const wantArtist = clean(artist)
+  // Prefer an exact-ish title match, then anything by the same uploader.
+  const scored = results
+    .map((t) => {
+      const ct = clean(t.title)
+      const ca = clean(t.artist)
+      let score = 0
+      if (ct === wantTitle) score += 4
+      else if (ct.includes(wantTitle) || wantTitle.includes(ct)) score += 2
+      if (ca === wantArtist) score += 3
+      else if (ca.includes(wantArtist) || wantArtist.includes(ca)) score += 1
+      // official uploads name the channel after the artist
+      if (/topic|official|vevo/i.test(t.artist)) score += 1
+      return { t, score }
+    })
+    .sort((a, b) => b.score - a.score)
+  return scored[0]?.score > 0 ? scored[0].t : results[0]
+}
+
+/* ------------------------------------------------------------------ *
  * Combined search — Deezer first (best coverage + images), then
  * interleave iTunes and Audius, deduped by title+artist.
  * ------------------------------------------------------------------ */
 export async function searchAll(query: string, limit = 40): Promise<Track[]> {
-  const per = Math.ceil(limit / 3)
-  const [dz, it, au] = await Promise.all([
+  const per = Math.ceil(limit / 4)
+  const [dz, it, yt, au] = await Promise.all([
     searchDeezer(query, per).catch(() => []),
     searchItunes(query, per).catch(() => []),
+    searchYouTube(query, per).catch(() => []),
     searchAudius(query, per).catch(() => []),
   ])
 
@@ -414,13 +537,36 @@ export async function searchAll(query: string, limit = 40): Promise<Track[]> {
     out.push(t)
   }
 
-  const max = Math.max(dz.length, it.length, au.length)
+  const max = Math.max(dz.length, it.length, yt.length, au.length)
   for (let i = 0; i < max; i++) {
     push(dz[i])
     push(it[i])
+    push(yt[i])
     push(au[i])
   }
   return out
+}
+
+/**
+ * Swap a 30-second preview for the matching full-length YouTube video.
+ * Deezer/iTunes give better metadata and artwork, so we keep the original
+ * track (and its id) and only replace the playback source. Returns null when
+ * there is no video, or the track is not a commercial preview.
+ */
+export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
+  if (track.source !== 'deezer' && track.source !== 'itunes') return null
+  const match = await findYouTubeTrack(track.artist, track.title).catch(() => null)
+  if (!match) return null
+  return {
+    ...track,
+    source: 'youtube',
+    sourceId: match.sourceId,
+    streamUrl: null,
+    preview: false,
+    previewTrack: track,
+    // the music video usually runs longer than the album cut
+    duration: match.duration || track.duration,
+  }
 }
 
 /* ------------------------------------------------------------------ *

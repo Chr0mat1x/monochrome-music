@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Playlist, RepeatMode, Track } from '../types'
 import { engine } from '../lib/audioEngine'
-import { inferProfile } from '../lib/musicApi'
+import { inferProfile, upgradeToFullTrack } from '../lib/musicApi'
 
 const LS_KEY = 'monochrome.v2'
 
@@ -50,6 +50,10 @@ interface StoreState {
   shuffleOrder: number[]
   /** Sleep timer: epoch ms when playback should stop, or null when off. */
   sleepAt: number | null
+  /** True while a 30s preview is being swapped for its full-length version. */
+  upgrading: boolean
+  /** Transient note shown in the player when full-length playback is unavailable. */
+  playbackNote: string | null
 
   register: (tracks: Track[]) => void
   playTrack: (track: Track, context?: Track[]) => void
@@ -127,13 +131,48 @@ export const useStore = create<StoreState>((set, get) => {
     if (t && t.id) bootRegistry.set(t.id, t)
   })
 
+  /**
+   * In-flight full-version upgrades, so repeated plays of the same preview
+   * do not fire duplicate YouTube lookups.
+   */
+  const upgrades = new Map<string, Promise<Track | null>>()
+
   const startTrack = (track: Track, index?: number) => {
     get().register([track])
     const recent = [track, ...get().recentlyPlayed.filter((t) => t.id !== track.id)].slice(0, 30)
-    set({ currentTrack: track, playing: true, loading: true, recentlyPlayed: recent })
+    set({ currentTrack: track, playing: true, loading: true, recentlyPlayed: recent, playbackNote: null })
     if (index !== undefined) set({ queueIndex: index })
     void engine.load(track, true)
     persist(get())
+
+    // Commercial previews start playing immediately; meanwhile we look for the
+    // full-length version and hot-swap it in (keeping the position) so the
+    // 30-second cut is never the end of the song.
+    if (!track.preview) return
+    set({ upgrading: true })
+    const key = `${track.artist}|${track.title}`.toLowerCase()
+    let pending = upgrades.get(key)
+    if (!pending) {
+      pending = upgradeToFullTrack(track)
+      upgrades.set(key, pending)
+      void pending.finally(() => upgrades.delete(key))
+    }
+    void pending
+      .then((full) => {
+        if (!full) return // no matching video
+        const state = get()
+        if (state.currentTrack?.id !== track.id) return // user moved on
+        const position = engine.getPosition()
+        const queue = state.queue.map((t) => (t.id === track.id ? full : t))
+        get().register([full])
+        set({ currentTrack: full, queue, playbackNote: null })
+        persist(get())
+        void engine.load(full, true, position)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (get().currentTrack?.id === track.id) set({ upgrading: false })
+      })
   }
 
   return {
@@ -152,6 +191,8 @@ export const useStore = create<StoreState>((set, get) => {
     shuffle: persisted.shuffle ?? false,
     shuffleOrder: [],
     sleepAt: null,
+    upgrading: false,
+    playbackNote: null,
 
     register: (tracks) => {
       const registry = get().registry
@@ -392,9 +433,19 @@ engine.setEvents({
     }
   },
   onError: () => {
+    const state = useStore.getState()
+    const cur = state.currentTrack
+    // A YouTube embed can be refused (bot check, region block, embed disabled).
+    // Fall back to the commercial preview instead of dropping the song.
+    if (cur && cur.source === 'youtube' && cur.previewTrack) {
+      const preview = cur.previewTrack
+      const queue = state.queue.map((t) => (t.id === cur.id ? preview : t))
+      useStore.setState({ currentTrack: preview, queue, playbackNote: 'Полная версия недоступна — играет превью 30 секунд' })
+      void engine.load(preview, true)
+      return
+    }
     // Move on rather than getting stuck on a broken stream.
-    const { playing } = useStore.getState()
-    if (playing) useStore.getState().next(true)
+    if (state.playing) state.next(true)
     else useStore.setState({ playing: false, loading: false })
   },
 })

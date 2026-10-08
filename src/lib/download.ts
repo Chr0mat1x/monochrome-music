@@ -22,6 +22,12 @@ function fileName(track: Track): string {
  * as a real file. If that is blocked we fall back to opening the raw URL.
  */
 export async function downloadTrack(track: Track): Promise<void> {
+  // YouTube audio cannot be extracted without breaking the platform's terms,
+  // so the honest action is to open the video on YouTube instead.
+  if (track.source === 'youtube') {
+    if (track.permalink) window.open(track.permalink, '_blank', 'noopener')
+    return
+  }
   const url = await resolveStreamUrl(track)
   if (!url) throw new Error('Не удалось получить ссылку на аудио')
 

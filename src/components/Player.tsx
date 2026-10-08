@@ -53,6 +53,8 @@ export function Player() {
   const toggleShuffle = useStore((s) => s.toggleShuffle)
   const repeat = useStore((s) => s.repeat)
   const cycleRepeat = useStore((s) => s.cycleRepeat)
+  const upgrading = useStore((s) => s.upgrading)
+  const playbackNote = useStore((s) => s.playbackNote)
   const liked = useStore((s) => (track ? s.liked.some((t) => t.id === track.id) : false))
   const toggleLike = useStore((s) => s.toggleLike)
   const [muted, setMuted] = useState(false)
@@ -104,6 +106,11 @@ export function Player() {
   return (
     <>
       <footer className="z-40 border-t border-ink-25 bg-ink-5 px-3 py-2 sm:px-4">
+        {playbackNote && (
+          <div className="mb-2 border border-ink-25 px-3 py-1 text-center text-[11px] text-ink-70">
+            {playbackNote}
+          </div>
+        )}
         <div className="grid grid-cols-[1fr_auto] items-center gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)]">
           <div className="flex min-w-0 items-center gap-3">
             {track ? (
@@ -126,7 +133,9 @@ export function Player() {
                     <span className="truncate">{track.title}</span>
                     <SourceBadge track={track} />
                   </button>
-                  <div className="truncate text-xs text-ink-60">{track.artist}</div>
+                  <div className="truncate text-xs text-ink-60">
+                    {upgrading ? 'Ищем полную версию…' : track.artist}
+                  </div>
                 </div>
                 <button
                   className={`icon-btn ml-1 hidden h-8 w-8 shrink-0 sm:grid ${liked ? 'text-ink-100' : ''}`}
@@ -211,9 +220,18 @@ export function Player() {
           </div>
 
           <div className="flex items-center justify-end gap-2">
-            <div className="hidden h-8 w-24 items-end opacity-70 lg:flex">
-              <Visualizer bars={22} mode="bars" className="h-full w-full" />
-            </div>
+            {track?.source === 'youtube' ? (
+              <span
+                className="hidden font-mono text-[10px] uppercase tracking-widest text-ink-60 lg:block"
+                title="Полная версия играет через официальный плеер YouTube — визуализатор недоступен"
+              >
+                youtube
+              </span>
+            ) : (
+              <div className="hidden h-8 w-24 items-end opacity-70 lg:flex">
+                <Visualizer bars={22} mode="bars" className="h-full w-full" />
+              </div>
+            )}
             <SleepTimer />
             <button
               className={`icon-btn h-8 w-8 ${queueOpen ? 'text-ink-100' : ''}`}

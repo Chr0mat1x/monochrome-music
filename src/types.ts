@@ -1,7 +1,7 @@
 export type Mode = 'major' | 'minor' | 'dorian' | 'lydian' | 'mixolydian' | 'phrygian'
 
 /** Which upstream catalogue a track came from. */
-export type Source = 'deezer' | 'itunes' | 'audius'
+export type Source = 'deezer' | 'itunes' | 'audius' | 'youtube'
 
 export interface Track {
   id: string
@@ -28,6 +28,8 @@ export interface Track {
   preview: boolean
   sourceId: string
   permalink: string | null
+  /** The commercial preview this full-length track replaced, for fallback. */
+  previewTrack?: Track
 }
 
 export interface Album {

@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import type { Track } from '../types'
 import { useStore } from '../store/useStore'
 import { downloadTrack } from '../lib/download'
-import { IconCheck, IconDownload, IconHeart, IconListPlus, IconPlus, IconQueue, IconTrash } from './Icons'
+import { upgradeToFullTrack } from '../lib/musicApi'
+import { IconCheck, IconDownload, IconHeart, IconListPlus, IconPlus, IconQueue, IconTrash, IconWave } from './Icons'
 
 interface TrackMenuProps {
   track: Track
@@ -92,6 +93,21 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
         {liked ? 'Убрать из избранного' : 'В избранное'}
       </button>
 
+      {track.preview && (
+        <button
+          className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-100 hover:bg-ink-20"
+          onClick={() => {
+            void upgradeToFullTrack(track).then((full) => {
+              if (full) playTrack(full)
+            })
+            onClose()
+          }}
+        >
+          <IconWave width={16} height={16} />
+          Слушать полную версию
+        </button>
+      )}
+
       <button
         className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
         onClick={() => {
@@ -100,7 +116,7 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
         }}
       >
         <IconDownload width={16} height={16} />
-        {track.preview ? 'Скачать превью' : 'Скачать трек'}
+        {track.source === 'youtube' ? 'Открыть на YouTube' : track.preview ? 'Скачать превью' : 'Скачать трек'}
       </button>
 
       <div className="my-1 h-px bg-ink-25" />
