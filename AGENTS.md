@@ -68,3 +68,12 @@ and streamed straight into the browser.
 - `downloadTrack` (`src/lib/download.ts`) fetches the CDN bytes into a Blob
   because the media hosts send permissive CORS headers; if that fetch is
   blocked it falls back to opening the raw URL.
+- Full-length playback: commercial Deezer/iTunes tracks are 30s previews. On
+  play, `startTrack` fires `upgradeToFullTrack` (Piped → YouTube search) and
+  hot-swaps in the full video, keeping the position; in-flight lookups are
+  deduped in an `upgrades` Map. `upgradeToFullTrack` returns `null` when there
+  is no match (do not treat an unchanged id as a miss — it keeps the original
+  id on purpose). The swapped track carries `previewTrack` so `onError` can
+  fall back to the preview and set `playbackNote` if the embed is refused
+  (bot check / region block). YouTube plays through a hidden IFrame player in
+  `src/lib/youtube.ts`; audio-only tracks still go through the Web Audio graph.
