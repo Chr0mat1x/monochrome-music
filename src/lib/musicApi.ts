@@ -557,16 +557,61 @@ export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
   if (track.source !== 'deezer' && track.source !== 'itunes') return null
   const match = await findYouTubeTrack(track.artist, track.title).catch(() => null)
   if (!match) return null
+  // Prefer direct audio (local yt-dlp server) so the track flows through the
+  // analyser; when it is unavailable we keep streamUrl null and the engine
+  // falls back to the IFrame player.
+  const streamUrl = await resolveFullAudio(match.sourceId).catch(() => null)
   return {
     ...track,
     source: 'youtube',
     sourceId: match.sourceId,
-    streamUrl: null,
+    streamUrl,
     preview: false,
     previewTrack: track,
     // the music video usually runs longer than the album cut
     duration: match.duration || track.duration,
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Local yt-dlp audio server
+ *
+ * On the listener's own machine a small companion server (server/index.mjs)
+ * can hand out full-length YouTube audio, because YouTube only blocks
+ * anonymous stream access from datacenter IPs. When it is reachable we play
+ * the audio directly through the Web Audio graph; otherwise we fall back to
+ * the official IFrame player (which works from residential IPs).
+ * ------------------------------------------------------------------ */
+const AUDIO_SERVER = '/api'
+
+let audioServerUp: boolean | null = null
+let audioServerProbe: Promise<boolean> | null = null
+
+/** Probe the companion server once per session. */
+export function hasAudioServer(): Promise<boolean> {
+  if (audioServerUp !== null) return Promise.resolve(audioServerUp)
+  if (audioServerProbe) return audioServerProbe
+  audioServerProbe = (async () => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 2500)
+    try {
+      const res = await fetch(`${AUDIO_SERVER}/health`, { signal: ctrl.signal })
+      audioServerUp = res.ok
+    } catch {
+      audioServerUp = false
+    } finally {
+      clearTimeout(timer)
+    }
+    return audioServerUp
+  })()
+  return audioServerProbe
+}
+
+/** Confirm the server can actually pull a given video before we commit to it. */
+export async function resolveFullAudio(videoId: string): Promise<string | null> {
+  if (!(await hasAudioServer())) return null
+  const data = await jsonFetch<{ ok?: boolean }>(`${AUDIO_SERVER}/resolve?id=${videoId}`, 20000)
+  return data?.ok ? `${AUDIO_SERVER}/audio?id=${videoId}` : null
 }
 
 /* ------------------------------------------------------------------ *

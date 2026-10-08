@@ -1,5 +1,5 @@
 import type { Track } from '../types'
-import { resolveAudiusStream, resolveDeezerStream } from './musicApi'
+import { resolveAudiusStream, resolveDeezerStream, resolveFullAudio } from './musicApi'
 import { loadYouTubeApi } from './youtube'
 
 type YTPlayer = {
@@ -191,8 +191,23 @@ export class AudioEngine {
     this.loading = true
     this.events.onLoadingChange?.(true)
 
-    // YouTube tracks play through the IFrame player instead of the audio element.
+    // Work out a direct audio URL first. YouTube tracks prefer the local
+    // yt-dlp server (full-length audio, analyser intact); if it is not
+    // available we fall back to the official IFrame player further down.
+    let url: string | null
     if (track.source === 'youtube') {
+      url = track.streamUrl
+      if (!url) {
+        url = await resolveFullAudio(track.sourceId).catch(() => null)
+        if (token !== this.token) return
+      }
+    } else {
+      url = await this.urlFor(track)
+      if (token !== this.token) return
+    }
+
+    // No direct URL for a YouTube track → hand it to the IFrame player.
+    if (track.source === 'youtube' && !url) {
       this.usingYt = true
       this.el?.pause()
       const player = await this.ensureYouTube()
@@ -211,8 +226,6 @@ export class AudioEngine {
     this.usingYt = false
     this.yt?.pauseVideo()
 
-    const url = await this.urlFor(track)
-    if (token !== this.token) return
     if (!url) {
       this.loading = false
       this.events.onLoadingChange?.(false)

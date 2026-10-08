@@ -12,9 +12,15 @@ and streamed straight into the browser.
 - react-router-dom for routing
 
 ## Commands
-- `npm run dev` — dev server on `0.0.0.0:12000` (keep `allowedHosts: true` in
-  `vite.config.ts` so the workspace proxy host is accepted)
+- `npm run dev` — starts the local yt-dlp audio proxy *and* Vite together
+  (`scripts/dev.mjs`); the app is on `0.0.0.0:12000`. Requires `yt-dlp` on the
+  machine for full-length playback; without it the app still runs and falls
+  back to YouTube's IFrame player.
+- `npm run dev:web` — Vite only, no audio proxy.
+- `npm run server` — the audio proxy alone (`server/index.mjs`, port 8787).
 - `npm run build` — `tsc -b` type-check + production build
+- Keep `allowedHosts: true` in `vite.config.ts` so the workspace proxy host is
+  accepted, and keep the `/api` proxy entry pointing at the audio server.
 
 ## Data sources (`src/lib/musicApi.ts`)
 - **Deezer** (`api.deezer.com`) — primary catalogue: mainstream artists, exact
@@ -75,5 +81,16 @@ and streamed straight into the browser.
   is no match (do not treat an unchanged id as a miss — it keeps the original
   id on purpose). The swapped track carries `previewTrack` so `onError` can
   fall back to the preview and set `playbackNote` if the embed is refused
-  (bot check / region block). YouTube plays through a hidden IFrame player in
-  `src/lib/youtube.ts`; audio-only tracks still go through the Web Audio graph.
+  (bot check / region block).
+- YouTube audio has two backends, tried in this order in `AudioEngine.load`:
+  1. **Local yt-dlp server** (`server/index.mjs`, reached at `/api`): the
+     listener's own machine resolves the direct audio URL and streams it, so
+     full-length playback works and flows through the Web Audio analyser.
+     `hasAudioServer()` probes `/api/health` once per session;
+     `resolveFullAudio(videoId)` confirms a specific video via `/api/resolve`
+     and returns the `/api/audio?id=…` URL. `upgradeToFullTrack` stores that
+     URL on `streamUrl`, and the engine resolves it lazily for YouTube tracks
+     that lack one. YouTube blocks anonymous stream access from datacenter
+     IPs, so this backend is what makes it work on a home connection.
+  2. **IFrame player** (`src/lib/youtube.ts`): fallback when the local server
+     is absent or cannot pull the video. No analyser for these tracks.
