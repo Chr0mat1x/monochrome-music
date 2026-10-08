@@ -14,9 +14,6 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const createPlaylist = useStore((s) => s.createPlaylist)
   const navigate = useNavigate()
 
-  const owned = playlists.filter((p) => p.owned)
-  const curated = playlists.filter((p) => !p.owned)
-
   return (
     <aside className="flex h-full w-full flex-col gap-2 bg-ink-0 p-2">
       <div className="rounded-lg bg-ink-10 p-2">
@@ -24,9 +21,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-ink-100">
             <span className="h-2 w-2 rounded-full bg-ink-100" />
           </span>
-          <span className="text-[15px] font-black uppercase tracking-[0.28em] text-ink-100">
-            Mono
-          </span>
+          <span className="text-[15px] font-black uppercase tracking-[0.28em] text-ink-100">Mono</span>
         </Link>
         <nav className="flex flex-col gap-0.5">
           <NavLink to="/" end className={navItem} onClick={onClose}>
@@ -46,9 +41,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-ink-10">
         <div className="flex items-center justify-between px-4 py-3">
-          <span className="text-xs font-semibold uppercase tracking-widest text-ink-60">
-            Плейлисты
-          </span>
+          <span className="text-xs font-semibold uppercase tracking-widest text-ink-60">Плейлисты</span>
           <button
             className="icon-btn h-7 w-7"
             title="Создать плейлист"
@@ -63,11 +56,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          <Link
-            to="/liked"
-            onClick={onClose}
-            className="flex items-center gap-3 rounded-md px-2 py-2 hover:bg-ink-20"
-          >
+          <Link to="/liked" onClick={onClose} className="flex items-center gap-3 rounded-md px-2 py-2 hover:bg-ink-20">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded bg-gradient-to-br from-ink-100 to-ink-50">
               <IconHeart filled width={18} height={18} className="text-ink-0" />
             </span>
@@ -77,46 +66,14 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             </span>
           </Link>
 
-          {owned.length > 0 && (
-            <div className="mt-3 px-2 text-[11px] font-semibold uppercase tracking-widest text-ink-50">
-              Мои
-            </div>
-          )}
-          {owned.map((p) => (
-            <Link
-              key={p.id}
-              to={`/playlist/${p.id}`}
-              onClick={onClose}
-              className="flex items-center gap-3 rounded-md px-2 py-2 hover:bg-ink-20"
-            >
+          {playlists.map((p) => (
+            <Link key={p.id} to={`/playlist/${p.id}`} onClick={onClose} className="flex items-center gap-3 rounded-md px-2 py-2 hover:bg-ink-20">
               <span className="h-10 w-10 shrink-0 overflow-hidden rounded">
-                <Cover seed={p.id + p.name} tone={30} className="h-full w-full" rounded="rounded" />
+                <Cover seed={p.id + p.name} artwork={p.tracks.find((t) => t.artwork)?.artwork ?? null} tone={30} className="h-full w-full" rounded="rounded" />
               </span>
               <span className="min-w-0">
                 <span className="block truncate text-sm text-ink-90">{p.name}</span>
-                <span className="block text-xs text-ink-50">
-                  Плейлист · {p.trackIds.length}
-                </span>
-              </span>
-            </Link>
-          ))}
-
-          <div className="mt-3 px-2 text-[11px] font-semibold uppercase tracking-widest text-ink-50">
-            Подборки
-          </div>
-          {curated.map((p) => (
-            <Link
-              key={p.id}
-              to={`/playlist/${p.id}`}
-              onClick={onClose}
-              className="flex items-center gap-3 rounded-md px-2 py-2 hover:bg-ink-20"
-            >
-              <span className="h-10 w-10 shrink-0 overflow-hidden rounded">
-                <Cover seed={p.id + p.name} tone={45} className="h-full w-full" rounded="rounded" />
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-sm text-ink-90">{p.name}</span>
-                <span className="block truncate text-xs text-ink-50">{p.description}</span>
+                <span className="block text-xs text-ink-50">{p.owned ? 'Плейлист' : 'Подборка'} · {p.tracks.length}</span>
               </span>
             </Link>
           ))}

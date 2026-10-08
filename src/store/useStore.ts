@@ -1,14 +1,20 @@
 import { create } from 'zustand'
 import type { Playlist, RepeatMode, Track } from '../types'
-import { STARTER_PLAYLISTS, TRACK_BY_ID, tracksByIds } from '../data/library'
 import { engine } from '../lib/audioEngine'
+import { inferProfile } from '../lib/musicApi'
 
-const LS_KEY = 'monochrome.v1'
+const LS_KEY = 'monochrome.v2'
+
+/* ------------------------------------------------------------------ *
+ * Remote tracks arrive from live APIs, so the store keeps a runtime
+ * registry that maps id → Track. Anything the user persists (likes,
+ * playlists, history) is stored as a full track snapshot.
+ * ------------------------------------------------------------------ */
 
 interface Persisted {
+  liked: Track[]
+  recentlyPlayed: Track[]
   playlists: Playlist[]
-  liked: string[]
-  recentlyPlayed: string[]
   volume: number
   repeat: RepeatMode
   shuffle: boolean
@@ -27,22 +33,25 @@ function loadPersisted(): Partial<Persisted> {
 const persisted = loadPersisted()
 
 interface StoreState {
+  /** runtime cache of every track seen from the APIs */
+  registry: Map<string, Track>
+  liked: Track[]
+  recentlyPlayed: Track[]
   playlists: Playlist[]
-  liked: string[]
-  recentlyPlayed: string[]
 
-  currentTrackId: string | null
-  queue: string[]
+  currentTrack: Track | null
+  queue: Track[]
   queueIndex: number
   playing: boolean
+  loading: boolean
   volume: number
   repeat: RepeatMode
   shuffle: boolean
-  /** shuffled order of queue indices, when shuffle is on */
   shuffleOrder: number[]
 
-  playTrack: (trackId: string, context?: string[]) => void
-  playContext: (ids: string[], startIndex: number) => void
+  register: (tracks: Track[]) => void
+  playTrack: (track: Track, context?: Track[]) => void
+  playContext: (tracks: Track[], startIndex: number) => void
   togglePlay: () => void
   next: (auto?: boolean) => void
   prev: () => void
@@ -51,27 +60,25 @@ interface StoreState {
   toggleShuffle: () => void
   cycleRepeat: () => void
 
-  enqueue: (trackId: string) => void
+  enqueue: (track: Track) => void
   removeFromQueue: (index: number) => void
 
-  toggleLike: (trackId: string) => void
-  isLiked: (trackId: string) => boolean
+  toggleLike: (track: Track) => void
+  isLiked: (id: string) => boolean
 
-  createPlaylist: (name: string, description: string, trackIds: string[]) => string
+  createPlaylist: (name: string, description: string, tracks: Track[]) => string
   deletePlaylist: (id: string) => void
   renamePlaylist: (id: string, name: string) => void
-  addToPlaylist: (playlistId: string, trackId: string) => void
+  updatePlaylistDescription: (id: string, description: string) => void
+  addToPlaylist: (playlistId: string, track: Track) => void
   removeFromPlaylist: (playlistId: string, trackId: string) => void
-
-  currentTrack: () => Track | null
-  queueTracks: () => Track[]
 }
 
 function persist(state: StoreState) {
   const data: Persisted = {
-    playlists: state.playlists,
     liked: state.liked,
     recentlyPlayed: state.recentlyPlayed,
+    playlists: state.playlists,
     volume: state.volume,
     repeat: state.repeat,
     shuffle: state.shuffle,
@@ -92,58 +99,89 @@ function makeShuffleOrder(length: number): number[] {
   return order
 }
 
+/** Rehydrate persisted tracks through the profile inference so old saves stay valid. */
+function reviveTrack(t: any): Track {
+  if (!t || typeof t !== 'object') return t
+  if (typeof t.energy === 'number' && typeof t.seed === 'number') return t as Track
+  const profile = inferProfile(t.genre ?? '', `${t.title}${t.artist}`)
+  return { ...t, ...profile } as Track
+}
+
 export const useStore = create<StoreState>((set, get) => {
   const bootVolume = persisted.volume ?? 0.85
 
-  const startTrack = (trackId: string) => {
-    const track = TRACK_BY_ID.get(trackId)
-    if (!track) return
-    const recent = [trackId, ...get().recentlyPlayed.filter((id) => id !== trackId)].slice(0, 30)
-    set({ currentTrackId: trackId, playing: true, recentlyPlayed: recent })
-    void engine.load(track, true, 0)
+  const bootRegistry = new Map<string, Track>()
+  const bootLiked = (persisted.liked ?? []).map(reviveTrack)
+  const bootRecent = (persisted.recentlyPlayed ?? []).map(reviveTrack)
+  const bootPlaylists = (persisted.playlists ?? []).map((p) => ({
+    ...p,
+    tracks: (p.tracks ?? []).map(reviveTrack),
+  }))
+  ;[...bootLiked, ...bootRecent, ...bootPlaylists.flatMap((p) => p.tracks)].forEach((t) => {
+    if (t && t.id) bootRegistry.set(t.id, t)
+  })
+
+  const startTrack = (track: Track, index?: number) => {
+    get().register([track])
+    const recent = [track, ...get().recentlyPlayed.filter((t) => t.id !== track.id)].slice(0, 30)
+    set({ currentTrack: track, playing: true, loading: true, recentlyPlayed: recent })
+    if (index !== undefined) set({ queueIndex: index })
+    void engine.load(track, true)
     persist(get())
   }
 
   return {
-    playlists: persisted.playlists ?? STARTER_PLAYLISTS,
-    liked: persisted.liked ?? [],
-    recentlyPlayed: persisted.recentlyPlayed ?? [],
+    registry: bootRegistry,
+    liked: bootLiked,
+    recentlyPlayed: bootRecent,
+    playlists: bootPlaylists,
 
-    currentTrackId: null,
+    currentTrack: null,
     queue: [],
     queueIndex: -1,
     playing: false,
+    loading: false,
     volume: bootVolume,
     repeat: persisted.repeat ?? 'off',
     shuffle: persisted.shuffle ?? false,
     shuffleOrder: [],
 
-    playTrack: (trackId, context) => {
-      const ids = context && context.length ? context : [trackId]
-      const index = Math.max(0, ids.indexOf(trackId))
-      set({ queue: ids, queueIndex: index, shuffleOrder: makeShuffleOrder(ids.length) })
-      startTrack(trackId)
+    register: (tracks) => {
+      const registry = get().registry
+      let changed = false
+      for (const t of tracks) {
+        if (t && t.id && !registry.has(t.id)) {
+          registry.set(t.id, t)
+          changed = true
+        }
+      }
+      if (changed) set({ registry })
     },
 
-    playContext: (ids, startIndex) => {
-      if (!ids.length) return
-      const index = Math.max(0, Math.min(startIndex, ids.length - 1))
-      set({ queue: ids, queueIndex: index, shuffleOrder: makeShuffleOrder(ids.length) })
-      startTrack(ids[index])
+    playTrack: (track, context) => {
+      const list = context && context.length ? context : [track]
+      const index = Math.max(0, list.findIndex((t) => t.id === track.id))
+      set({ queue: list, queueIndex: index, shuffleOrder: makeShuffleOrder(list.length) })
+      startTrack(track, index)
+    },
+
+    playContext: (tracks, startIndex) => {
+      if (!tracks.length) return
+      const index = Math.max(0, Math.min(startIndex, tracks.length - 1))
+      set({ queue: tracks, queueIndex: index, shuffleOrder: makeShuffleOrder(tracks.length) })
+      startTrack(tracks[index], index)
     },
 
     togglePlay: () => {
-      const { currentTrackId, playing, queue } = get()
-      if (!currentTrackId) {
+      const { currentTrack, playing, queue } = get()
+      if (!currentTrack) {
         if (queue.length) get().playContext(queue, 0)
         return
       }
       if (playing) {
         engine.pause()
-        set({ playing: false })
       } else {
-        engine.play()
-        set({ playing: true })
+        void engine.play()
       }
     },
 
@@ -151,8 +189,8 @@ export const useStore = create<StoreState>((set, get) => {
       const { queue, queueIndex, repeat, shuffle, shuffleOrder } = get()
       if (!queue.length) return
       if (auto && repeat === 'one') {
-        const id = queue[queueIndex]
-        if (id) startTrack(id)
+        const t = queue[queueIndex]
+        if (t) startTrack(t, queueIndex)
         return
       }
       let nextIndex: number
@@ -162,7 +200,6 @@ export const useStore = create<StoreState>((set, get) => {
         if (nextPos >= shuffleOrder.length) {
           if (auto && repeat === 'off') {
             engine.pause()
-            set({ playing: false })
             return
           }
           nextIndex = shuffleOrder[0]
@@ -174,14 +211,12 @@ export const useStore = create<StoreState>((set, get) => {
         if (nextIndex >= queue.length) {
           if (auto && repeat === 'off') {
             engine.pause()
-            set({ playing: false })
             return
           }
           nextIndex = 0
         }
       }
-      set({ queueIndex: nextIndex })
-      startTrack(queue[nextIndex])
+      startTrack(queue[nextIndex], nextIndex)
     },
 
     prev: () => {
@@ -198,8 +233,7 @@ export const useStore = create<StoreState>((set, get) => {
       } else {
         prevIndex = (queueIndex - 1 + queue.length) % queue.length
       }
-      set({ queueIndex: prevIndex })
-      startTrack(queue[prevIndex])
+      startTrack(queue[prevIndex], prevIndex)
     },
 
     seek: (position) => engine.seek(position),
@@ -223,13 +257,14 @@ export const useStore = create<StoreState>((set, get) => {
       persist(get())
     },
 
-    enqueue: (trackId) => {
-      const { queue, currentTrackId } = get()
-      if (!currentTrackId) {
-        get().playTrack(trackId)
+    enqueue: (track) => {
+      const { queue, currentTrack } = get()
+      get().register([track])
+      if (!currentTrack) {
+        get().playTrack(track)
         return
       }
-      set({ queue: [...queue, trackId] })
+      set({ queue: [...queue, track] })
     },
 
     removeFromQueue: (index) => {
@@ -241,26 +276,28 @@ export const useStore = create<StoreState>((set, get) => {
       set({ queue: next, queueIndex: idx, shuffleOrder: makeShuffleOrder(next.length) })
     },
 
-    toggleLike: (trackId) => {
+    toggleLike: (track) => {
+      get().register([track])
       const liked = get().liked
-      const has = liked.includes(trackId)
-      set({ liked: has ? liked.filter((id) => id !== trackId) : [trackId, ...liked] })
+      const has = liked.some((t) => t.id === track.id)
+      set({ liked: has ? liked.filter((t) => t.id !== track.id) : [track, ...liked] })
       persist(get())
     },
 
-    isLiked: (trackId) => get().liked.includes(trackId),
+    isLiked: (id) => get().liked.some((t) => t.id === id),
 
-    createPlaylist: (name, description, trackIds) => {
+    createPlaylist: (name, description, tracks) => {
       const id = `pl-user-${Date.now()}`
       const playlist: Playlist = {
         id,
         name: name.trim() || 'Новый плейлист',
         description,
-        trackIds,
+        tracks,
         cover: 'custom',
         owned: true,
         createdAt: Date.now(),
       }
+      get().register(tracks)
       set({ playlists: [playlist, ...get().playlists] })
       persist(get())
       return id
@@ -278,11 +315,17 @@ export const useStore = create<StoreState>((set, get) => {
       persist(get())
     },
 
-    addToPlaylist: (playlistId, trackId) => {
+    updatePlaylistDescription: (id, description) => {
+      set({ playlists: get().playlists.map((p) => (p.id === id ? { ...p, description } : p)) })
+      persist(get())
+    },
+
+    addToPlaylist: (playlistId, track) => {
+      get().register([track])
       set({
         playlists: get().playlists.map((p) =>
-          p.id === playlistId && !p.trackIds.includes(trackId)
-            ? { ...p, trackIds: [...p.trackIds, trackId] }
+          p.id === playlistId && !p.tracks.some((t) => t.id === track.id)
+            ? { ...p, tracks: [...p.tracks, track] }
             : p,
         ),
       })
@@ -292,26 +335,33 @@ export const useStore = create<StoreState>((set, get) => {
     removeFromPlaylist: (playlistId, trackId) => {
       set({
         playlists: get().playlists.map((p) =>
-          p.id === playlistId ? { ...p, trackIds: p.trackIds.filter((id) => id !== trackId) } : p,
+          p.id === playlistId ? { ...p, tracks: p.tracks.filter((t) => t.id !== trackId) } : p,
         ),
       })
       persist(get())
     },
-
-    currentTrack: () => {
-      const id = get().currentTrackId
-      return id ? TRACK_BY_ID.get(id) ?? null : null
-    },
-
-    queueTracks: () => tracksByIds(get().queue),
   }
 })
 
-// Wire the audio engine back into the store: when a track finishes the
-// engine asks us to advance the queue.
-engine.onEnded = () => useStore.getState().next(true)
+// Keep the store in sync with the engine's real playback events.
+engine.setEvents({
+  onEnded: () => useStore.getState().next(true),
+  onPlayingChange: (playing) => useStore.setState({ playing }),
+  onLoadingChange: (loading) => useStore.setState({ loading }),
+  onDuration: (duration) => {
+    const cur = useStore.getState().currentTrack
+    if (cur && Math.abs(cur.duration - duration) > 1) {
+      useStore.setState({ currentTrack: { ...cur, duration } })
+    }
+  },
+  onError: () => {
+    // Move on rather than getting stuck on a broken stream.
+    const { playing } = useStore.getState()
+    if (playing) useStore.getState().next(true)
+    else useStore.setState({ playing: false, loading: false })
+  },
+})
 
-// Push the persisted volume into the engine on the first user gesture.
 if (typeof window !== 'undefined') {
   const applyVolume = () => {
     engine.setVolume(useStore.getState().volume)

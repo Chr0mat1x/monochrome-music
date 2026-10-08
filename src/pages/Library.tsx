@@ -1,132 +1,121 @@
-import { useMemo, useState } from 'react'
-import { ALBUMS, ALL_GENRES, ARTISTS, TRACKS } from '../data/library'
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useStore } from '../store/useStore'
-import { MediaCard } from '../components/MediaCard'
+import { Cover } from '../components/Cover'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
+import { MediaCard } from '../components/MediaCard'
+import { IconHeart, IconPlay, IconPlus } from '../components/Icons'
 
-type Tab = 'tracks' | 'albums' | 'artists'
+type Tab = 'liked' | 'playlists' | 'recent'
 
 export function Library() {
-  const [tab, setTab] = useState<Tab>('tracks')
-  const [genre, setGenre] = useState<string | null>(null)
-  const [sort, setSort] = useState<'default' | 'energy' | 'bpm' | 'year'>('default')
+  const [tab, setTab] = useState<Tab>('liked')
   const liked = useStore((s) => s.liked)
-  const likedIds = useMemo(() => new Set(liked), [liked])
-
-  const filteredTracks = useMemo(() => {
-    let list = genre ? TRACKS.filter((t) => t.genre === genre) : [...TRACKS]
-    if (sort === 'energy') list.sort((a, b) => b.energy - a.energy)
-    else if (sort === 'bpm') list.sort((a, b) => b.bpm - a.bpm)
-    else if (sort === 'year') list.sort((a, b) => b.year - a.year)
-    return list
-  }, [genre, sort])
-
-  const trackIds = filteredTracks.map((t) => t.id)
-  const filteredAlbums = genre ? ALBUMS.filter((a) => a.trackIds.some((id) => TRACKS.find((t) => t.id === id)?.genre === genre)) : ALBUMS
-  const filteredArtists = genre
-    ? ARTISTS.filter((a) => a.genres.includes(genre) || TRACKS.some((t) => t.artist === a.name && t.genre === genre))
-    : ARTISTS
+  const playlists = useStore((s) => s.playlists)
+  const recentlyPlayed = useStore((s) => s.recentlyPlayed)
+  const playContext = useStore((s) => s.playContext)
+  const createPlaylist = useStore((s) => s.createPlaylist)
 
   return (
     <div className="px-4 pb-10 sm:px-6">
-      <h1 className="pt-2 text-3xl font-black tracking-tight text-ink-100">Медиатека</h1>
-      <p className="mt-1 text-sm text-ink-60">
-        {TRACKS.length} треков · {ALBUMS.length} альбомов · {ARTISTS.length} артистов
-      </p>
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {(['tracks', 'albums', 'artists'] as Tab[]).map((t) => (
-          <button key={t} className={`chip ${tab === t ? 'chip-active' : ''}`} onClick={() => setTab(t)}>
-            {t === 'tracks' ? 'Треки' : t === 'albums' ? 'Альбомы' : 'Артисты'}
-          </button>
-        ))}
-
-        <span className="ml-2 hidden h-4 w-px bg-ink-30 sm:block" />
-
-        <button className={`chip ${genre === null ? 'chip-active' : ''}`} onClick={() => setGenre(null)}>
-          Все жанры
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+        <h1 className="text-3xl font-black tracking-tight text-ink-100">Медиатека</h1>
+        <button
+          className="flex items-center gap-2 rounded-full border border-ink-40 px-4 py-2 text-sm font-semibold text-ink-90 hover:border-ink-100"
+          onClick={() => createPlaylist('Новый плейлист', 'Описание пока не задано', [])}
+        >
+          <IconPlus width={16} height={16} /> Плейлист
         </button>
-        {ALL_GENRES.map((g) => (
-          <button key={g} className={`chip ${genre === g ? 'chip-active' : ''}`} onClick={() => setGenre(g)}>
-            {g}
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {(
+          [
+            ['liked', `Избранное · ${liked.length}`],
+            ['playlists', `Плейлисты · ${playlists.length}`],
+            ['recent', `Недавно · ${recentlyPlayed.length}`],
+          ] as const
+        ).map(([k, label]) => (
+          <button key={k} className={`chip ${tab === k ? 'chip-active' : ''}`} onClick={() => setTab(k)}>
+            {label}
           </button>
         ))}
       </div>
 
-      {tab === 'tracks' && (
-        <>
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-ink-60">
-            Сортировка:
-            {(
-              [
-                ['default', 'По умолчанию'],
-                ['energy', 'По энергии'],
-                ['bpm', 'По темпу'],
-                ['year', 'По году'],
-              ] as const
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                className={`rounded px-2 py-1 transition-colors ${
-                  sort === k ? 'bg-ink-100 text-ink-0' : 'hover:bg-ink-20'
-                }`}
-                onClick={() => setSort(k)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="mt-4">
-            <TrackListHeader />
-            {filteredTracks.map((t, i) => (
-              <TrackRow
-                key={t.id}
-                track={t}
-                index={i}
-                contextIds={trackIds}
-                showCover
-                onRemove={likedIds.has(t.id) ? undefined : undefined}
-              />
-            ))}
-          </div>
-        </>
+      {tab === 'liked' && (
+        <div className="mt-6">
+          {liked.length === 0 ? (
+            <Empty icon text="Пока пусто. Нажимайте на сердце рядом с треком." />
+          ) : (
+            <>
+              <div className="mb-4 flex items-center gap-4">
+                <button
+                  className="grid h-14 w-14 place-items-center rounded-full bg-ink-100 text-ink-0 transition-transform hover:scale-105"
+                  onClick={() => playContext(liked, 0)}
+                  aria-label="Играть"
+                >
+                  <IconPlay width={22} height={22} />
+                </button>
+                <Link to="/liked" className="text-sm font-semibold text-ink-80 hover:text-ink-100">
+                  Открыть страницу избранного →
+                </Link>
+              </div>
+              <TrackListHeader />
+              {liked.map((t, i) => (
+                <TrackRow key={t.id} track={t} index={i} context={liked} showCover />
+              ))}
+            </>
+          )}
+        </div>
       )}
 
-      {tab === 'albums' && (
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {filteredAlbums.map((a) => (
+      {tab === 'playlists' && (
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {playlists.map((p) => (
             <MediaCard
-              key={a.id}
-              to={`/album/${a.id}`}
-              seed={a.id}
-              tone={a.accent + 20}
-              title={a.title}
-              subtitle={`${a.artist} · ${a.year}`}
-              contextIds={a.trackIds}
+              key={p.id}
+              to={`/playlist/${p.id}`}
+              seed={p.id + p.name}
+              artwork={p.tracks.find((t) => t.artwork)?.artwork ?? null}
+              tone={38}
+              title={p.name}
+              subtitle={`${p.owned ? 'Мой' : 'Подборка'} · ${p.tracks.length} треков`}
+              context={p.tracks}
             />
           ))}
+          <button
+            onClick={() => createPlaylist('Новый плейлист', 'Описание пока не задано', [])}
+            className="flex aspect-auto flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-ink-30 p-6 text-ink-60 transition-colors hover:border-ink-100 hover:text-ink-100"
+          >
+            <IconPlus width={28} height={28} />
+            <span className="text-sm">Создать плейлист</span>
+          </button>
         </div>
       )}
 
-      {tab === 'artists' && (
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {filteredArtists.map((a) => {
-            const ids = TRACKS.filter((t) => t.artist === a.name).map((t) => t.id)
-            return (
-              <MediaCard
-                key={a.id}
-                to={`/artist/${encodeURIComponent(a.name)}`}
-                seed={a.name}
-                tone={55}
-                title={a.name}
-                subtitle={a.genres.join(' · ')}
-                contextIds={ids}
-                circle
-              />
-            )
-          })}
+      {tab === 'recent' && (
+        <div className="mt-6">
+          {recentlyPlayed.length === 0 ? (
+            <Empty text="Здесь появятся треки, которые вы слушали." />
+          ) : (
+            <>
+              <TrackListHeader />
+              {recentlyPlayed.map((t, i) => (
+                <TrackRow key={t.id} track={t} index={i} context={recentlyPlayed} showCover />
+              ))}
+            </>
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+function Empty({ text, icon = false }: { text: string; icon?: boolean }) {
+  return (
+    <div className="rounded-xl border border-dashed border-ink-30 p-12 text-center">
+      {icon && <IconHeart width={40} height={40} className="mx-auto text-ink-40" />}
+      <p className="mt-3 text-sm text-ink-60">{text}</p>
     </div>
   )
 }

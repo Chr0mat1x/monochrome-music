@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { formatDuration } from '../data/library'
+import { formatDuration } from '../lib/format'
 import { engine } from '../lib/audioEngine'
 import { useStore } from '../store/useStore'
 import { Cover } from './Cover'
@@ -20,6 +20,7 @@ import {
 } from './Icons'
 import { QueuePanel } from './QueuePanel'
 import { NowPlaying } from './NowPlaying'
+import { SourceBadge } from './TrackRow'
 
 function usePlaybackPosition(playing: boolean, trackId: string | null) {
   const [pos, setPos] = useState(0)
@@ -37,9 +38,10 @@ function usePlaybackPosition(playing: boolean, trackId: string | null) {
 }
 
 export function Player() {
-  const track = useStore((s) => s.currentTrack())
+  const track = useStore((s) => s.currentTrack)
   const playing = useStore((s) => s.playing)
-  const currentTrackId = useStore((s) => s.currentTrackId)
+  const loading = useStore((s) => s.loading)
+  const currentTrackId = track?.id ?? null
   const togglePlay = useStore((s) => s.togglePlay)
   const next = useStore((s) => s.next)
   const prev = useStore((s) => s.prev)
@@ -50,7 +52,7 @@ export function Player() {
   const toggleShuffle = useStore((s) => s.toggleShuffle)
   const repeat = useStore((s) => s.repeat)
   const cycleRepeat = useStore((s) => s.cycleRepeat)
-  const liked = useStore((s) => (track ? s.liked.includes(track.id) : false))
+  const liked = useStore((s) => (track ? s.liked.some((t) => t.id === track.id) : false))
   const toggleLike = useStore((s) => s.toggleLike)
   const [muted, setMuted] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
@@ -58,7 +60,6 @@ export function Player() {
 
   const pos = usePlaybackPosition(playing, currentTrackId)
   const duration = track?.duration ?? 0
-  const progress = duration ? (pos / duration) * 100 : 0
   const [scrubbing, setScrubbing] = useState<number | null>(null)
 
   useEffect(() => {
@@ -85,7 +86,6 @@ export function Player() {
     <>
       <footer className="z-40 border-t border-ink-25 bg-ink-5 px-3 py-2 sm:px-4">
         <div className="grid grid-cols-[1fr_auto] items-center gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)]">
-          {/* now playing info */}
           <div className="flex min-w-0 items-center gap-3">
             {track ? (
               <>
@@ -94,23 +94,24 @@ export function Player() {
                   onClick={() => setNowPlayingOpen(true)}
                   aria-label="Открыть плеер"
                 >
-                  <Cover seed={track.id} tone={track.valence} className="h-full w-full" rounded="rounded-md" />
+                  <Cover seed={track.id} artwork={track.artwork} tone={track.valence} className="h-full w-full" rounded="rounded-md" />
                   <span className="absolute inset-0 grid place-items-center bg-black/50 opacity-0 transition-opacity hover:opacity-100">
                     <IconExpand width={18} height={18} className="text-ink-100" />
                   </span>
                 </button>
                 <div className="min-w-0">
                   <button
-                    className="block max-w-full truncate text-left text-sm font-medium text-ink-95 hover:underline"
+                    className="flex max-w-full items-center gap-2 truncate text-left text-sm font-medium text-ink-95 hover:underline"
                     onClick={() => setNowPlayingOpen(true)}
                   >
-                    {track.title}
+                    <span className="truncate">{track.title}</span>
+                    <SourceBadge track={track} />
                   </button>
                   <div className="truncate text-xs text-ink-60">{track.artist}</div>
                 </div>
                 <button
                   className={`icon-btn ml-1 hidden h-8 w-8 shrink-0 sm:grid ${liked ? 'text-ink-100' : ''}`}
-                  onClick={() => toggleLike(track.id)}
+                  onClick={() => toggleLike(track)}
                   aria-label="В избранное"
                 >
                   <IconHeart filled={liked} width={17} height={17} />
@@ -129,15 +130,9 @@ export function Player() {
             )}
           </div>
 
-          {/* transport */}
           <div className="order-last col-span-2 flex flex-col items-center gap-1 md:order-none md:col-span-1">
             <div className="flex items-center gap-3 sm:gap-4">
-              <button
-                className={`icon-btn h-8 w-8 ${shuffle ? 'text-ink-100' : ''}`}
-                onClick={toggleShuffle}
-                aria-label="Перемешать"
-                title="Перемешать"
-              >
+              <button className={`icon-btn h-8 w-8 ${shuffle ? 'text-ink-100' : ''}`} onClick={toggleShuffle} aria-label="Перемешать" title="Перемешать">
                 <IconShuffle width={18} height={18} />
               </button>
               <button className="icon-btn h-9 w-9" onClick={() => prev()} aria-label="Предыдущий">
@@ -149,7 +144,13 @@ export function Player() {
                 disabled={!track}
                 aria-label={playing ? 'Пауза' : 'Играть'}
               >
-                {playing ? <IconPause width={20} height={20} /> : <IconPlay width={20} height={20} />}
+                {loading && track ? (
+                  <span className="h-4 w-4 animate-spin-slow rounded-full border-2 border-ink-0 border-t-transparent" />
+                ) : playing ? (
+                  <IconPause width={20} height={20} />
+                ) : (
+                  <IconPlay width={20} height={20} />
+                )}
               </button>
               <button className="icon-btn h-9 w-9" onClick={() => next()} aria-label="Следующий">
                 <IconNext width={20} height={20} />
@@ -165,9 +166,7 @@ export function Player() {
             </div>
 
             <div className="hidden w-full max-w-xl items-center gap-2 sm:flex">
-              <span className="w-10 text-right text-[11px] tabular-nums text-ink-60">
-                {formatDuration(shownPos)}
-              </span>
+              <span className="w-10 text-right text-[11px] tabular-nums text-ink-60">{formatDuration(shownPos)}</span>
               <input
                 type="range"
                 className="mono-range h-4 flex-1"
@@ -188,13 +187,10 @@ export function Player() {
                 disabled={!track}
                 aria-label="Позиция"
               />
-              <span className="w-10 text-[11px] tabular-nums text-ink-60">
-                {formatDuration(duration)}
-              </span>
+              <span className="w-10 text-[11px] tabular-nums text-ink-60">{formatDuration(duration)}</span>
             </div>
           </div>
 
-          {/* right controls */}
           <div className="flex items-center justify-end gap-2">
             <div className="hidden h-8 w-24 items-end opacity-70 lg:flex">
               <Visualizer bars={22} mode="bars" className="h-full w-full" />

@@ -1,163 +1,194 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ALBUMS, ARTISTS, TRACKS, ALL_GENRES } from '../data/library'
+import type { Track } from '../types'
+import { searchAll, getArtist } from '../lib/musicApi'
+import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
-import { TrackRow, TrackListHeader } from '../components/TrackRow'
+import { TrackRow, TrackListHeader, SourceBadge } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
 import { IconSearch } from '../components/Icons'
 
-type Filter = 'all' | 'tracks' | 'artists' | 'albums'
+const HOT = ['The Weeknd', 'Coldplay', 'lofi', 'techno', 'jazz', 'Billie Eilish', 'rock', 'ambient', 'rap', 'классика']
 
-function normalise(s: string) {
-  return s.toLowerCase().replace(/ё/g, 'ё')
-}
+type Filter = 'all' | 'tracks' | 'artists' | 'albums'
 
 export function Search() {
   const [params, setParams] = useSearchParams()
   const initial = params.get('q') ?? ''
   const [query, setQuery] = useState(initial)
   const [filter, setFilter] = useState<Filter>('all')
+  const [results, setResults] = useState<Track[]>([])
+  const [artists, setArtists] = useState<{ name: string; art: string | null; genres: string[] }[]>([])
+  const [busy, setBusy] = useState(false)
+  const register = useStore((s) => s.register)
 
   useEffect(() => {
     setQuery(params.get('q') ?? '')
   }, [params])
 
-  const q = normalise(query.trim())
+  useEffect(() => {
+    const q = query.trim()
+    if (!q) {
+      setResults([])
+      setArtists([])
+      return
+    }
+    let cancelled = false
+    setBusy(true)
+    const timer = window.setTimeout(async () => {
+      const tracks = await searchAll(q, 40)
+      if (cancelled) return
+      setResults(tracks)
+      register(tracks)
 
-  const results = useMemo(() => {
-    if (!q) return { tracks: [], artists: [], albums: [] }
-    const tracks = TRACKS.filter(
-      (t) =>
-        normalise(t.title).includes(q) ||
-        normalise(t.artist).includes(q) ||
-        normalise(t.album).includes(q) ||
-        normalise(t.genre).includes(q) ||
-        t.mood.some((m) => normalise(m).includes(q)),
-    )
-    const artists = ARTISTS.filter((a) => normalise(a.name).includes(q) || a.genres.some((g) => normalise(g).includes(q)))
-    const albums = ALBUMS.filter((a) => normalise(a.title).includes(q) || normalise(a.artist).includes(q))
-    return { tracks, artists, albums }
-  }, [q])
+      // derive an artist list from result diversity
+      const seen = new Map<string, { name: string; art: string | null; genres: string[] }>()
+      for (const t of tracks) {
+        if (!seen.has(t.artist))
+          seen.set(t.artist, { name: t.artist, art: t.artwork, genres: [t.genre].filter(Boolean) })
+      }
+      setArtists(Array.from(seen.values()).slice(0, 6))
+      setBusy(false)
+    }, 350)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [query, register])
 
-  const hasResults = results.tracks.length + results.artists.length + results.albums.length > 0
-  const trackIds = results.tracks.map((t) => t.id)
+  const albums = useMemo(() => {
+    const map = new Map<string, { id: string; title: string; artist: string; art: string | null; tracks: Track[] }>()
+    for (const t of results) {
+      if (!t.album) continue
+      const key = `${t.artist}|${t.album}`
+      if (!map.has(key)) map.set(key, { id: t.id, title: t.album, artist: t.artist, art: t.artwork, tracks: [] })
+      map.get(key)!.tracks.push(t)
+    }
+    return Array.from(map.values())
+      .filter((a) => a.tracks.length >= 2)
+      .slice(0, 6)
+  }, [results])
+
+  const submit = (q: string) => {
+    setQuery(q)
+    setParams(q ? { q } : {})
+  }
+
+  const hasResults = results.length > 0
+  const show = (f: Filter) => filter === 'all' || filter === f
 
   return (
     <div className="px-4 pb-10 sm:px-6">
       <div className="relative pt-2">
-        <IconSearch
-          width={20}
-          height={20}
-          className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ink-60"
-        />
+        <IconSearch width={20} height={20} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ink-60" />
         <input
           autoFocus
           value={query}
-          onChange={(e) => {
-            setQuery(e.target.value)
-            setParams(e.target.value ? { q: e.target.value } : {})
-          }}
-          placeholder="Что послушаем?"
+          onChange={(e) => submit(e.target.value)}
+          placeholder="Артист, трек, альбом — поиск в реальных каталогах…"
           className="w-full rounded-full border border-ink-25 bg-ink-10 py-3 pl-12 pr-4 text-base text-ink-95 outline-none placeholder:text-ink-50 focus:border-ink-100"
         />
+        {busy && (
+          <span className="absolute right-4 top-1/2 flex -translate-y-1/2 items-end gap-[3px]">
+            {[0, 1, 2, 3].map((i) => (
+              <span key={i} className={`h-3 w-[3px] origin-bottom animate-bar-${i + 1} rounded bg-ink-100`} />
+            ))}
+          </span>
+        )}
       </div>
+
+      <p className="mt-2 text-[11px] uppercase tracking-widest text-ink-50">
+        Источники: iTunes (превью 30с) · Audius (полные треки)
+      </p>
 
       <div className="mt-4 flex flex-wrap gap-2">
         {(['all', 'tracks', 'artists', 'albums'] as Filter[]).map((f) => (
-          <button
-            key={f}
-            className={`chip ${filter === f ? 'chip-active' : ''}`}
-            onClick={() => setFilter(f)}
-          >
+          <button key={f} className={`chip ${filter === f ? 'chip-active' : ''}`} onClick={() => setFilter(f)}>
             {f === 'all' ? 'Всё' : f === 'tracks' ? 'Треки' : f === 'artists' ? 'Артисты' : 'Альбомы'}
           </button>
         ))}
       </div>
 
-      {!q && (
+      {!query.trim() && (
         <div className="mt-8">
-          <h2 className="mb-3 text-lg font-bold text-ink-100">Обзор жанров</h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {ALL_GENRES.map((g) => (
-              <button
-                key={g}
-                onClick={() => {
-                  setQuery(g)
-                  setParams({ q: g })
-                }}
-                className="group relative aspect-[16/9] overflow-hidden rounded-lg border border-ink-25 bg-ink-10 text-left transition-colors hover:border-ink-100"
-              >
-                <div className="absolute inset-0 opacity-25 transition-opacity group-hover:opacity-40">
-                  <Cover seed={`genre-${g}`} tone={60} rounded="rounded-none" className="h-full w-full" />
-                </div>
-                <span className="absolute bottom-3 left-4 text-lg font-black tracking-tight text-ink-100">
-                  {g}
-                </span>
+          <h2 className="mb-3 text-lg font-bold text-ink-100">Популярные запросы</h2>
+          <div className="flex flex-wrap gap-2">
+            {HOT.map((h) => (
+              <button key={h} className="chip" onClick={() => submit(h)}>
+                {h}
               </button>
             ))}
           </div>
         </div>
       )}
 
-      {q && !hasResults && (
-        <div className="mt-16 text-center">
-          <div className="text-2xl font-black text-ink-100">Ничего не найдено</div>
-          <p className="mt-2 text-sm text-ink-60">
-            По запросу «{query}» совпадений нет. Попробуйте другое слово или жанр.
-          </p>
+      {busy && !hasResults && (
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div key={i} className="animate-pulse-soft rounded-lg bg-ink-10 p-3">
+              <div className="aspect-square w-full rounded-md bg-ink-20" />
+              <div className="mt-3 h-3 w-3/4 rounded bg-ink-20" />
+              <div className="mt-2 h-2 w-1/2 rounded bg-ink-15" />
+            </div>
+          ))}
         </div>
       )}
 
-      {q && hasResults && (
+      {!busy && query.trim() && !hasResults && (
+        <div className="mt-16 text-center">
+          <div className="text-2xl font-black text-ink-100">Ничего не найдено</div>
+          <p className="mt-2 text-sm text-ink-60">По запросу «{query}» совпадений нет. Попробуйте другое имя или жанр.</p>
+        </div>
+      )}
+
+      {hasResults && (
         <>
-          {(filter === 'all' || filter === 'artists') && results.artists.length > 0 && (
+          {show('artists') && artists.length > 0 && (
             <section className="mt-8">
               <h2 className="mb-3 text-lg font-bold text-ink-100">Артисты</h2>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                {results.artists.slice(0, filter === 'all' ? 5 : 20).map((a) => {
-                  const ids = TRACKS.filter((t) => t.artist === a.name).map((t) => t.id)
-                  return (
-                    <MediaCard
-                      key={a.id}
-                      to={`/artist/${encodeURIComponent(a.name)}`}
-                      seed={a.name}
-                      tone={55}
-                      title={a.name}
-                      subtitle={a.genres.join(' · ')}
-                      contextIds={ids}
-                      circle
-                    />
-                  )
-                })}
-              </div>
-            </section>
-          )}
-
-          {(filter === 'all' || filter === 'albums') && results.albums.length > 0 && (
-            <section className="mt-8">
-              <h2 className="mb-3 text-lg font-bold text-ink-100">Альбомы</h2>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                {results.albums.slice(0, filter === 'all' ? 5 : 20).map((a) => (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                {artists.map((a) => (
                   <MediaCard
-                    key={a.id}
-                    to={`/album/${a.id}`}
-                    seed={a.id}
-                    tone={a.accent + 20}
-                    title={a.title}
-                    subtitle={`${a.artist} · ${a.year}`}
-                    contextIds={a.trackIds}
+                    key={a.name}
+                    to={`/artist/${encodeURIComponent(a.name)}`}
+                    seed={a.name}
+                    artwork={a.art}
+                    tone={55}
+                    title={a.name}
+                    subtitle={a.genres.join(' · ') || 'артист'}
+                    circle
                   />
                 ))}
               </div>
             </section>
           )}
 
-          {(filter === 'all' || filter === 'tracks') && results.tracks.length > 0 && (
+          {show('albums') && albums.length > 0 && (
+            <section className="mt-8">
+              <h2 className="mb-3 text-lg font-bold text-ink-100">Альбомы</h2>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                {albums.map((a) => (
+                  <MediaCard
+                    key={a.id}
+                    to={`/album/${encodeURIComponent(a.artist)}::${encodeURIComponent(a.title)}`}
+                    seed={a.id}
+                    artwork={a.art}
+                    tone={40}
+                    title={a.title}
+                    subtitle={`${a.artist} · ${a.tracks.length} треков`}
+                    context={a.tracks}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {show('tracks') && (
             <section className="mt-8">
               <h2 className="mb-3 text-lg font-bold text-ink-100">Треки</h2>
               <TrackListHeader />
-              {results.tracks.slice(0, filter === 'all' ? 12 : 100).map((t, i) => (
-                <TrackRow key={t.id} track={t} index={i} contextIds={trackIds} showCover />
+              {results.map((t, i) => (
+                <TrackRow key={t.id} track={t} index={i} context={results} showCover />
               ))}
             </section>
           )}

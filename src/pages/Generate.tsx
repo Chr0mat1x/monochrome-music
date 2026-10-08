@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import type { Track } from '../types'
 import { useStore } from '../store/useStore'
-import { generatePlaylist, parseMood } from '../lib/moodEngine'
-import type { GeneratedPlaylist } from '../lib/moodEngine'
-import { tracksByIds } from '../data/library'
+import { parseMood, type MoodQuery, buildSearchQuery } from '../lib/moodEngine'
+import { searchAll } from '../lib/musicApi'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
 import { IconCheck, IconPlay, IconSparkles } from '../components/Icons'
@@ -21,38 +21,58 @@ const QUICK_PROMPTS = [
   'космический дрон для сна',
 ]
 
+interface Generated {
+  name: string
+  description: string
+  query: MoodQuery
+  tracks: Track[]
+}
+
 export function Generate() {
   const [text, setText] = useState('')
   const [limit, setLimit] = useState(24)
-  const [result, setResult] = useState<GeneratedPlaylist | null>(null)
+  const [result, setResult] = useState<Generated | null>(null)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const navigate = useNavigate()
 
   const playContext = useStore((s) => s.playContext)
   const createPlaylist = useStore((s) => s.createPlaylist)
+  const register = useStore((s) => s.register)
 
-  const preview = text.trim() ? parseMood(text, limit) : null
+  const preview = text.trim() ? parseMood(text) : null
 
-  const run = () => {
+  const run = async () => {
     if (!text.trim()) return
     setBusy(true)
     setSaved(false)
-    // brief delay so the analysis animation reads on screen
-    window.setTimeout(() => {
-      setResult(generatePlaylist(text, limit))
-      setBusy(false)
-    }, 650)
+    const query = parseMood(text)
+    const searchTerm = buildSearchQuery(query, text)
+    const found = await searchAll(searchTerm, Math.max(limit * 2, 40))
+
+    // rank by how close each track sits to the requested mood profile
+    const scored = found
+      .map((t) => ({ t, score: moodDistance(query, t) }))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, limit)
+      .map((s) => s.t)
+
+    register(scored)
+    setResult({
+      name: query.title || text.slice(0, 40),
+      description: `Сгенерировано по описанию: «${text.trim()}». Найдено ${scored.length} реальных треков в каталогах iTunes и Audius.`,
+      query,
+      tracks: scored,
+    })
+    setBusy(false)
   }
 
   const save = () => {
     if (!result) return
-    const id = createPlaylist(result.name, result.description, result.trackIds)
+    const id = createPlaylist(result.name, result.description, result.tracks)
     setSaved(true)
     window.setTimeout(() => navigate(`/playlist/${id}`), 400)
   }
-
-  const resultTracks = result ? tracksByIds(result.trackIds) : []
 
   return (
     <div className="px-4 pb-10 sm:px-6">
@@ -60,12 +80,10 @@ export function Generate() {
         <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.3em] text-ink-60">
           <IconSparkles width={15} height={15} /> генератор по настроению
         </div>
-        <h1 className="mt-2 text-3xl font-black tracking-tight text-ink-100 sm:text-4xl">
-          Опишите настроение
-        </h1>
+        <h1 className="mt-2 text-3xl font-black tracking-tight text-ink-100 sm:text-4xl">Опишите настроение</h1>
         <p className="mt-2 max-w-2xl text-sm text-ink-60">
-          Напишите состояние, место, время суток или жанр — движок разберёт описание по параметрам
-          (энергия, светлотa, темп, жанр) и соберёт плейлист из каталога.
+          Напишите состояние, место, время суток или жанр — движок разберёт описание по параметрам (энергия,
+          светлотa, темп, жанр), подберёт поисковый запрос и соберёт плейлист из <b className="text-ink-80">реальных треков</b>.
         </p>
       </div>
 
@@ -74,7 +92,7 @@ export function Generate() {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') run()
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void run()
           }}
           rows={3}
           placeholder="например: мрачный медленный эмбиент для ночной работы, без слов, спокойный…"
@@ -107,17 +125,16 @@ export function Generate() {
           </label>
 
           <button
-            onClick={run}
+            onClick={() => void run()}
             disabled={!text.trim() || busy}
             className="ml-auto flex items-center gap-2 rounded-full bg-ink-100 px-5 py-2.5 text-sm font-bold text-ink-0 transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <IconSparkles width={16} height={16} />
-            {busy ? 'Анализирую…' : 'Сгенерировать'}
+            {busy ? 'Ищу треки…' : 'Сгенерировать'}
           </button>
         </div>
       </div>
 
-      {/* live mood profile preview */}
       {preview && (
         <div className="mt-4 grid gap-3 rounded-xl border border-ink-25 bg-ink-10 p-4 sm:grid-cols-3">
           <MoodMeter label="Энергия" value={preview.energy} />
@@ -137,14 +154,10 @@ export function Generate() {
         <div className="mt-6 flex items-center gap-3 rounded-xl border border-ink-25 bg-ink-10 p-6">
           <span className="flex items-end gap-1">
             {[0, 1, 2, 3, 4].map((i) => (
-              <span
-                key={i}
-                className={`w-1 origin-bottom animate-bar-${(i % 4) + 1} rounded bg-ink-100`}
-                style={{ height: 24 }}
-              />
+              <span key={i} className={`w-1 origin-bottom animate-bar-${(i % 4) + 1} rounded bg-ink-100`} style={{ height: 24 }} />
             ))}
           </span>
-          <span className="text-sm text-ink-70">Разбираю описание и подбираю треки…</span>
+          <span className="text-sm text-ink-70">Разбираю описание и ищу реальные треки в каталогах…</span>
         </div>
       )}
 
@@ -153,16 +166,15 @@ export function Generate() {
           <div className="flex flex-col gap-5 rounded-xl bg-ink-10 p-4 sm:flex-row sm:p-5">
             <div className="w-full shrink-0 sm:w-52">
               <Cover
-                seed={result.name + result.trackIds.join('')}
+                seed={result.name + result.tracks.map((t) => t.id).join('')}
+                artwork={result.tracks.find((t) => t.artwork)?.artwork ?? null}
                 tone={result.query.valence}
                 rounded="rounded-lg"
                 className="aspect-square w-full shadow-xl shadow-black/50"
               />
             </div>
             <div className="flex min-w-0 flex-1 flex-col">
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-ink-50">
-                Сгенерированный плейлист
-              </span>
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-ink-50">Сгенерированный плейлист</span>
               <h2 className="mt-1 text-3xl font-black tracking-tight text-ink-100">{result.name}</h2>
               <p className="mt-2 text-sm leading-relaxed text-ink-60">{result.description}</p>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -177,44 +189,45 @@ export function Generate() {
               </div>
               <div className="mt-4 flex flex-wrap gap-3">
                 <button
-                  className="flex items-center gap-2 rounded-full bg-ink-100 px-5 py-2.5 text-sm font-bold text-ink-0 transition-transform hover:scale-[1.02]"
-                  onClick={() => playContext(result.trackIds, 0)}
+                  className="flex items-center gap-2 rounded-full bg-ink-100 px-5 py-2.5 text-sm font-bold text-ink-0 transition-transform hover:scale-[1.02] disabled:opacity-40"
+                  onClick={() => playContext(result.tracks, 0)}
+                  disabled={!result.tracks.length}
                 >
                   <IconPlay width={16} height={16} /> Играть
                 </button>
                 <button
                   className="flex items-center gap-2 rounded-full border border-ink-40 px-5 py-2.5 text-sm font-semibold text-ink-90 transition-colors hover:border-ink-100"
                   onClick={save}
+                  disabled={!result.tracks.length}
                 >
                   {saved ? <IconCheck width={16} height={16} /> : null}
                   {saved ? 'Сохранено' : 'Сохранить в медиатеку'}
                 </button>
-                <button
-                  className="rounded-full px-4 py-2.5 text-sm font-medium text-ink-60 hover:text-ink-100"
-                  onClick={run}
-                >
+                <button className="rounded-full px-4 py-2.5 text-sm font-medium text-ink-60 hover:text-ink-100" onClick={() => void run()}>
                   Перегенерировать
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="mt-6">
-            <TrackListHeader />
-            {resultTracks.map((t, i) => (
-              <TrackRow
-                key={t.id}
-                track={t}
-                index={i}
-                contextIds={result.trackIds}
-                showCover
-              />
-            ))}
-          </div>
+          {result.tracks.length === 0 ? (
+            <p className="mt-6 text-sm text-ink-60">По этому описанию треки не нашлись. Попробуйте сформулировать иначе.</p>
+          ) : (
+            <div className="mt-6">
+              <TrackListHeader />
+              {result.tracks.map((t, i) => (
+                <TrackRow key={t.id} track={t} index={i} context={result.tracks} showCover />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   )
+}
+
+function moodDistance(q: MoodQuery, t: Track): number {
+  return Math.abs(q.energy - t.energy) * 1.0 + Math.abs(q.valence - t.valence) * 0.7 + (q.bpm ? Math.abs(q.bpm - t.bpm) * 0.15 : 0)
 }
 
 function MoodMeter({ label, value }: { label: string; value: number }) {
@@ -225,10 +238,7 @@ function MoodMeter({ label, value }: { label: string; value: number }) {
         <span className="text-sm font-bold tabular-nums text-ink-100">{value}</span>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink-30">
-        <div
-          className="h-full rounded-full bg-ink-100 transition-[width] duration-500"
-          style={{ width: `${value}%` }}
-        />
+        <div className="h-full rounded-full bg-ink-100 transition-[width] duration-500" style={{ width: `${value}%` }} />
       </div>
     </div>
   )

@@ -16,7 +16,7 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
   const ref = useRef<HTMLDivElement | null>(null)
   const [subOpen, setSubOpen] = useState(false)
   const playlists = useStore((s) => s.playlists)
-  const liked = useStore((s) => s.liked.includes(track.id))
+  const liked = useStore((s) => s.liked.some((t) => t.id === track.id))
   const toggleLike = useStore((s) => s.toggleLike)
   const enqueue = useStore((s) => s.enqueue)
   const addToPlaylist = useStore((s) => s.addToPlaylist)
@@ -52,7 +52,7 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
       <button
         className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
         onClick={() => {
-          playTrack(track.id)
+          playTrack(track)
           onClose()
         }}
       >
@@ -62,7 +62,7 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
       <button
         className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
         onClick={() => {
-          enqueue(track.id)
+          enqueue(track)
           onClose()
         }}
       >
@@ -72,7 +72,7 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
       <button
         className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
         onClick={() => {
-          toggleLike(track.id)
+          toggleLike(track)
           onClose()
         }}
       >
@@ -95,26 +95,24 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
         </button>
         {subOpen && (
           <div className="mx-2 mb-1 max-h-56 overflow-y-auto rounded-md border border-ink-25 bg-ink-5">
-            {ownedPlaylists.length === 0 && (
-              <div className="px-3 py-2 text-xs text-ink-60">Нет своих плейлистов</div>
-            )}
+            {ownedPlaylists.length === 0 && <div className="px-3 py-2 text-xs text-ink-60">Нет своих плейлистов</div>}
             {ownedPlaylists.map((p) => (
               <button
                 key={p.id}
                 className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-ink-80 hover:bg-ink-20"
                 onClick={() => {
-                  addToPlaylist(p.id, track.id)
+                  addToPlaylist(p.id, track)
                   onClose()
                 }}
               >
                 <span className="truncate">{p.name}</span>
-                {p.trackIds.includes(track.id) && <IconCheck width={14} height={14} />}
+                {p.tracks.some((t) => t.id === track.id) && <IconCheck width={14} height={14} />}
               </button>
             ))}
             <button
               className="flex w-full items-center gap-2 border-t border-ink-25 px-3 py-2 text-left text-xs text-ink-100 hover:bg-ink-20"
               onClick={() => {
-                createPlaylist('Новый плейлист', '', [track.id])
+                createPlaylist('Новый плейлист', '', [track])
                 onClose()
               }}
             >

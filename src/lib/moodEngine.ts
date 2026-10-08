@@ -1,247 +1,140 @@
-import type { Track } from '../types'
-import { TRACKS } from '../data/library'
+/* ------------------------------------------------------------------ *
+ * Bilingual (RU/EN) mood parser.
+ * Turns a free-text description into a musical profile plus a set of
+ * search terms, which are then sent to the live catalogues. Scoring of
+ * the returned tracks happens in the page (see `moodDistance`).
+ * ------------------------------------------------------------------ */
 
 export interface MoodQuery {
   energy: number
   valence: number
-  bpm: number | null
+  bpm: number
   genres: string[]
-  moods: string[]
+  terms: string[]
   instrumental: boolean
-  limit: number
-  label: string
+  title: string
 }
 
-interface KeywordRule {
+interface Rule {
   words: string[]
   energy?: number
   valence?: number
   bpm?: number
-  genres?: string[]
-  moods?: string[]
+  genre?: string
+  term?: string
   instrumental?: boolean
+  title?: string
 }
 
-/**
- * Bilingual (RU/EN) keyword map. Values are target positions on a 0..100
- * energy/valence plane, mirroring the dimensions stored on every track.
- */
-const RULES: KeywordRule[] = [
-  { words: ['груст', 'печал', 'тоск', 'уныл', 'слез', 'sad', 'melanchol', 'blue', 'depress'], energy: 30, valence: 15, moods: ['меланхолия', 'грусть'] },
-  { words: ['весел', 'радост', 'счастл', 'праздник', 'happy', 'joy', 'cheer', 'upbeat', 'fun'], energy: 68, valence: 88, moods: ['радость'] },
-  { words: ['энерг', 'бодр', 'драйв', 'мощн', 'energy', 'energetic', 'power', 'pump', 'drive'], energy: 88, valence: 62, moods: ['энергия', 'драйв'] },
-  { words: ['спокой', 'тих', 'умиротвор', 'расслаб', 'relax', 'calm', 'peace', 'chill', 'serene'], energy: 16, valence: 58, moods: ['спокойствие'] },
-  { words: ['зл', 'агресс', 'ярост', 'angry', 'rage', 'aggress', 'fury'], energy: 94, valence: 10, moods: ['агрессия', 'злость'], genres: ['Industrial', 'Techno'] },
-  { words: ['тревог', 'страх', 'напряж', 'anxious', 'tense', 'fear', 'dark', 'мрак', 'готик'], energy: 62, valence: 12, moods: ['тревога', 'мрак'], genres: ['Darkwave', 'Industrial'] },
-  { words: ['романт', 'любов', 'нежн', 'romantic', 'love', 'tender', 'soft'], energy: 34, valence: 72, moods: ['романтика'] },
-  { words: ['медитац', 'дыхан', 'йог', 'meditat', 'zen', 'breath', 'mindful'], energy: 8, valence: 52, moods: ['медитация', 'фокус'], genres: ['Ambient', 'Drone'] },
-  { words: ['фокус', 'работ', 'код', 'концентрац', 'focus', 'work', 'study', 'cognit', 'deep'], energy: 28, valence: 52, moods: ['фокус', 'работа'], genres: ['Ambient', 'Minimal', 'Drone'] },
-  { words: ['учёб', 'учеб', 'study', 'чита', 'книг'], energy: 26, valence: 58, moods: ['учёба', 'фокус'], genres: ['Lo-Fi', 'Ambient'] },
-  { words: ['клуб', 'танц', 'вечерин', 'club', 'dance', 'party', 'rave'], energy: 92, valence: 72, moods: ['клуб', 'движение'], genres: ['Techno', 'Breakbeat'] },
-  { words: ['трениров', 'спорт', 'бег', 'качал', 'workout', 'gym', 'run', 'sport'], energy: 90, valence: 70, moods: ['спорт', 'драйв'], genres: ['Breakbeat', 'Techno'] },
-  { words: ['сон', 'засып', 'колыбел', 'sleep', 'lull', 'insomnia', 'бессонниц'], energy: 6, valence: 46, moods: ['ночь', 'медитация'], genres: ['Ambient', 'Drone'] },
-  { words: ['ноч', 'night', 'nocturn', 'полноч', 'midnight'], energy: 42, valence: 30, moods: ['ночь'], genres: ['Synthwave', 'Darkwave', 'Trip-Hop'] },
-  { words: ['дожд', 'rain', 'storm', 'гроза', 'пасмур'], energy: 32, valence: 40, moods: ['дождь', 'уют'], genres: ['Lo-Fi', 'Shoegaze'] },
-  { words: ['космос', 'space', 'orbit', 'звёзд', 'star', 'галакт', 'вселенн'], energy: 22, valence: 56, moods: ['космос'], genres: ['Ambient', 'Drone'] },
-  { words: ['ретро', 'nostalg', 'ностальг', '80', 'синтвейв', 'synthwave', 'vintage'], energy: 64, valence: 74, moods: ['ностальгия', 'ретро'], genres: ['Synthwave'] },
-  { words: ['нуар', 'noir', 'детектив', 'шпион', 'city', 'город'], energy: 38, valence: 28, moods: ['нуар', 'город'], genres: ['Jazz Noir', 'Trip-Hop'] },
-  { words: ['эпик', 'эпичн', 'героич', 'epic', 'heroic', 'cinemat', 'кино', 'саундтрек'], energy: 58, valence: 40, moods: ['эпик', 'кинематографично'], genres: ['Post-Rock', 'Neo-Classical'] },
-  { words: ['мечт', 'dream', 'мечтат', 'шугейз', 'shoegaze', 'воздушн'], energy: 50, valence: 64, moods: ['мечтательность'], genres: ['Shoegaze'] },
-  { words: ['индустр', 'industrial', 'механик', 'машин'], energy: 88, valence: 18, moods: ['индустрия', 'хаос'], genres: ['Industrial'] },
-  { words: ['джаз', 'jazz', 'саксофон', 'sax', 'блюз', 'blues'], energy: 40, valence: 44, moods: ['нуар'], genres: ['Jazz Noir'] },
-  { words: ['лоф', 'lofi', 'lo-fi', 'уют', 'cozy', 'chill'], energy: 24, valence: 68, moods: ['уют', 'учёба'], genres: ['Lo-Fi'] },
-  { words: ['пост-рок', 'post-rock', 'пост рок', 'нараст'], energy: 60, valence: 34, moods: ['эпик', 'глубина'], genres: ['Post-Rock'] },
-  { words: ['быстр', 'fast', 'скорост', 'speed', 'гонк', 'race', 'поездк', 'road'], energy: 82, valence: 68, bpm: 132, moods: ['драйв', 'поездка'], genres: ['Breakbeat', 'Techno', 'Synthwave'] },
-  { words: ['медленн', 'slow', 'неспешн', 'тягуч'], energy: 18, valence: 40, bpm: 66, moods: ['медитация'] },
-  { words: ['утро', 'morning', 'рассвет', 'sunrise', 'просып'], energy: 46, valence: 76, moods: ['утро'] },
-  { words: ['вечер', 'evening', 'закат', 'sunset', 'сумерк'], energy: 40, valence: 54, moods: ['вечер'] },
-  { words: ['зим', 'winter', 'снег', 'snow', 'мороз', 'холод'], energy: 30, valence: 44, moods: ['зима', 'холод'] },
-  { words: ['лето', 'summer', 'жар', 'heat', 'пляж', 'beach'], energy: 62, valence: 84, moods: ['лето'] },
-  { words: ['осень', 'autumn', 'fall', 'листопад'], energy: 34, valence: 38, moods: ['грусть', 'ностальгия'] },
-  { words: ['весн', 'spring', 'цвет'], energy: 50, valence: 72, moods: ['надежда'] },
-  { words: ['одиночеств', 'одинок', 'alone', 'lonely', 'изоляц'], energy: 24, valence: 22, moods: ['меланхолия'] },
-  { words: ['надежд', 'hope', 'свет', 'light', 'вдохнов', 'inspir'], energy: 46, valence: 80, moods: ['надежда'] },
-  { words: ['гипноз', 'hypnot', 'транс', 'trance', 'монотон', 'repetit'], energy: 40, valence: 50, moods: ['гипноз'], genres: ['Minimal', 'Techno', 'Drone'] },
-  { words: ['шум', 'noise', 'стена звука', 'wall of sound'], energy: 74, valence: 40, moods: ['шум'], genres: ['Shoegaze', 'Industrial'] },
-  { words: ['инструментал', 'instrumental', 'без слов', 'no vocal'], energy: 40, valence: 50, instrumental: true },
+const RULES: Rule[] = [
+  // energy axes
+  { words: ['энергичн', 'энергия', 'бодр', 'драйв', 'мощн', 'быстр', 'разгон', 'интенсив', 'тренировк', 'бег', 'спорт'], energy: 90, bpm: 140 },
+  { words: ['спокойн', 'тих', 'умиротвор', 'медленн', 'нежн', 'мягк', 'расслаб', 'релакс', 'сон', 'уснуть', 'дрем'], energy: 20, bpm: 78 },
+  { words: ['energetic', 'fast', 'driving', 'powerful', 'intense', 'workout', 'gym', 'run'], energy: 90, bpm: 140 },
+  { words: ['calm', 'quiet', 'slow', 'gentle', 'soft', 'relax', 'sleep', 'peaceful'], energy: 20, bpm: 78 },
+
+  // valence axes
+  { words: ['груст', 'печаль', 'тоск', 'меланхол', 'слез', 'драм', 'уныл', 'одинок', 'разбит', 'боль'], valence: 18 },
+  { words: ['радост', 'весел', 'счаст', 'праздник', 'солнечн', 'летн', 'позитив', 'улыб', 'танц'], valence: 88 },
+  { words: ['sad', 'melancholy', 'gloomy', 'lonely', 'blue', 'cry'], valence: 18 },
+  { words: ['happy', 'joy', 'sunny', 'summer', 'fun', 'party', 'upbeat'], valence: 88 },
+
+  // dark / bright
+  { words: ['мрачн', 'тёмн', 'темн', 'зл', 'агресс', 'тяжёл', 'тяжел', 'жутк', 'тревож', 'холодн', 'ночн', 'dark'], valence: 22, energy: 55 },
+  { words: ['светл', 'тёпл', 'тепл', 'ярк', 'добр', 'уютн', 'мягк', 'утренн', 'warm', 'bright', 'cozy'], valence: 72 },
+
+  // genres (also feed the search terms)
+  { words: ['техно', 'techno'], genre: 'techno', term: 'techno', energy: 88, bpm: 138, title: 'Техно-ночь' },
+  { words: ['хаус', 'house'], genre: 'house', term: 'house music', energy: 82, bpm: 126 },
+  { words: ['транс', 'trance'], genre: 'trance', term: 'trance', energy: 86, bpm: 138 },
+  { words: ['брейкбит', 'breakbeat', 'drum and bass', 'drum & bass', 'dnb'], genre: 'breakbeat', term: 'breakbeat drum and bass', energy: 92, bpm: 172 },
+  { words: ['ло-фай', 'лофай', 'lo-fi', 'lofi', 'lo fi'], genre: 'lo-fi', term: 'lofi chillhop', energy: 30, valence: 64, bpm: 84, title: 'Lo-Fi поток' },
+  { words: ['эмбиент', 'ambient', 'дрон', 'drone', 'космическ', 'космос', 'space'], genre: 'ambient', term: 'ambient drone', energy: 16, valence: 50, bpm: 70, instrumental: true, title: 'Эмбиент' },
+  { words: ['джаз', 'jazz', 'блюз', 'blues', 'нуар', 'noir'], genre: 'jazz', term: 'jazz noir', energy: 42, valence: 48, bpm: 96, title: 'Джаз' },
+  { words: ['классик', 'classical', 'пианино', 'piano', 'нео-классик', 'neo-classical', 'оркестр', 'orchestra'], genre: 'classical', term: 'classical piano', energy: 30, valence: 46, bpm: 80, instrumental: true },
+  { words: ['рок', 'rock', 'метал', 'metal', 'панк', 'punk', 'пост-рок', 'post-rock'], genre: 'rock', term: 'rock', energy: 80, valence: 45, bpm: 132 },
+  { words: ['рэп', 'rap', 'хип-хоп', 'hip-hop', 'hip hop', 'трэп', 'trap'], genre: 'hip-hop', term: 'hip hop rap', energy: 70, bpm: 96 },
+  { words: ['поп', 'pop'], genre: 'pop', term: 'pop hits', energy: 68, valence: 82, bpm: 118 },
+  { words: ['синтвейв', 'synthwave', 'ретро', 'retro', '80-х', '80s', 'неон', 'neon'], genre: 'synthwave', term: 'synthwave retrowave', energy: 66, valence: 58, bpm: 116 },
+  { words: ['дарквейв', 'darkwave', 'готик', 'gothic', 'готика'], genre: 'darkwave', term: 'darkwave gothic', energy: 58, valence: 24, bpm: 124 },
+  { words: ['шугейз', 'shoegaze', 'дрим-поп', 'dream pop'], genre: 'shoegaze', term: 'shoegaze dream pop', energy: 52, valence: 44, bpm: 100 },
+  { words: ['кантри', 'country', 'фолк', 'folk', 'акустик', 'acoustic'], genre: 'folk', term: 'acoustic folk', energy: 40, valence: 62, bpm: 92 },
+  { words: ['регги', 'reggae', 'латина', 'latin', 'афро', 'afro'], genre: 'reggae', term: 'reggae latin', energy: 64, valence: 82, bpm: 102 },
+  { words: ['r&b', 'rnb', 'соул', 'soul'], genre: 'r&b', term: 'rnb soul', energy: 52, valence: 64, bpm: 100 },
+  { words: ['k-pop', 'kpop', 'j-pop', 'jpop', 'аниме', 'anime'], genre: 'k-pop', term: 'kpop jpop', energy: 82, valence: 86, bpm: 130 },
+
+  // contexts
+  { words: ['работ', 'код', 'учёб', 'учеб', 'чита', 'study', 'work', 'focus', 'концентрац'], energy: 32, instrumental: true, title: 'Для работы' },
+  { words: ['ночн', 'ночь', 'night', 'полноч'], title: 'Ночной плейлист' },
+  { words: ['утр', 'morning', 'рассвет'], valence: 74, title: 'Утро' },
+  { words: ['вечер', 'evening', 'закат'], valence: 54, title: 'Вечер' },
+  { words: ['дожд', 'rain', 'ливн'], valence: 36, title: 'Под дождь' },
+  { words: ['дорог', 'поездк', 'трасс', 'road', 'drive', 'путь'], energy: 70, title: 'В дорогу' },
+  { words: ['медитац', 'meditation', 'дзен', 'zen', 'йога', 'yoga'], energy: 14, valence: 56, instrumental: true, title: 'Медитация' },
+  { words: ['без слов', 'инструментал', 'instrumental', 'no vocals', 'без вокала'], instrumental: true },
 ]
 
-const STOP_WORDS = new Set([
-  'и', 'в', 'во', 'на', 'с', 'со', 'для', 'под', 'из', 'от', 'до', 'по', 'а', 'но',
-  'что', 'как', 'это', 'мне', 'хочу', 'сделай', 'плейлист', 'создай', 'музыка', 'музыку',
-  'трек', 'треки', 'песня', 'песни', 'настроение', 'под', 'чтобы', 'the', 'a', 'an', 'and',
-  'for', 'with', 'to', 'of', 'playlist', 'make', 'create', 'music', 'song', 'songs', 'want',
-  'like', 'feel', 'feeling', 'mood', 'vibe', 'some', 'that', 'this',
-])
-
-function normalise(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/ё/g, 'ё')
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function detectBpm(text: string): number | null {
-  const match = text.match(/(\d{2,3})\s*(bpm|бпм|уд\/(мин|м))?/)
-  if (match) {
-    const v = parseInt(match[1], 10)
-    if (v >= 40 && v <= 220) return v
-  }
-  const explicit = text.match(/(\d{2,3})\s*(bpm|бпм)/)
-  if (explicit) {
-    const v = parseInt(explicit[1], 10)
-    if (v >= 40 && v <= 220) return v
-  }
-  return null
-}
-
-export function parseMood(text: string, limit = 24): MoodQuery {
-  const norm = normalise(text)
-  const words = norm.split(' ').filter((w) => w && !STOP_WORDS.has(w))
-
-  let energySum = 0
-  let energyN = 0
-  let valenceSum = 0
-  let valenceN = 0
-  let bpmSum = 0
-  let bpmN = 0
-  const genres = new Set<string>()
-  const moods = new Set<string>()
+export function parseMood(text: string): MoodQuery {
+  const t = text.toLowerCase()
+  let energy: number | null = null
+  let valence: number | null = null
+  let bpm: number | null = null
   let instrumental = false
-  const matchedLabels: string[] = []
+  const genres: string[] = []
+  const terms: string[] = []
+  let title = ''
 
   for (const rule of RULES) {
-    const hit = rule.words.some((w) => norm.includes(w))
-    if (!hit) continue
-    if (rule.energy !== undefined) {
-      energySum += rule.energy
-      energyN++
-    }
-    if (rule.valence !== undefined) {
-      valenceSum += rule.valence
-      valenceN++
-    }
-    if (rule.bpm !== undefined) {
-      bpmSum += rule.bpm
-      bpmN++
-    }
-    rule.genres?.forEach((g) => genres.add(g))
-    rule.moods?.forEach((m) => moods.add(m))
+    if (!rule.words.some((w) => t.includes(w))) continue
+    if (rule.energy != null) energy = energy == null ? rule.energy : Math.round((energy + rule.energy) / 2)
+    if (rule.valence != null) valence = valence == null ? rule.valence : Math.round((valence + rule.valence) / 2)
+    if (rule.bpm != null && bpm == null) bpm = rule.bpm
+    if (rule.genre && !genres.includes(rule.genre)) genres.push(rule.genre)
+    if (rule.term && !terms.includes(rule.term)) terms.push(rule.term)
     if (rule.instrumental) instrumental = true
-    matchedLabels.push(rule.words[0])
+    if (rule.title && !title) title = rule.title
   }
 
-  const explicitBpm = detectBpm(norm)
+  // extract a leading tempo number if the user wrote one
+  const bpmMatch = t.match(/(\d{2,3})\s*(bpm|бпм)/)
+  if (bpmMatch) bpm = Number(bpmMatch[1])
 
-  // Fall back to the description's own words when nothing matched, so the
-  // generator always produces something plausible.
-  const energy = energyN ? energySum / energyN : 50
-  const valence = valenceN ? valenceSum / valenceN : 50
-  const bpm = explicitBpm ?? (bpmN ? Math.round(bpmSum / bpmN) : null)
+  const finalEnergy = energy ?? 55
+  const finalValence = valence ?? (instrumental ? 55 : 58)
 
-  const label =
-    words.length > 0
-      ? `«${words.slice(0, 5).join(' ')}»`
-      : 'без описания'
+  if (!title) {
+    if (finalEnergy >= 75) title = finalValence < 40 ? 'Тяжёлый драйв' : 'Разгон'
+    else if (finalEnergy <= 30) title = finalValence < 40 ? 'Тихая грусть' : 'Спокойствие'
+    else title = finalValence < 40 ? 'Серый день' : 'Ровный поток'
+  }
 
   return {
-    energy: Math.round(energy),
-    valence: Math.round(valence),
-    bpm,
-    genres: Array.from(genres),
-    moods: Array.from(moods),
+    energy: finalEnergy,
+    valence: finalValence,
+    bpm: bpm ?? 0,
+    genres,
+    terms,
     instrumental,
-    limit,
-    label,
+    title,
   }
 }
 
-export interface ScoredTrack {
-  track: Track
-  score: number
-}
-
-/**
- * Ranks the whole catalogue against a parsed mood query. Genre and mood
- * matches dominate; energy/valence proximity and tempo refine the order.
- */
-export function scoreTracks(query: MoodQuery): ScoredTrack[] {
-  const scored: ScoredTrack[] = TRACKS.map((track) => {
-    let score = 0
-
-    // Energy / valence proximity — up to 30 points each.
-    score += 30 * (1 - Math.abs(track.energy - query.energy) / 100)
-    score += 30 * (1 - Math.abs(track.valence - query.valence) / 100)
-
-    // Tempo proximity — up to 12 points.
-    if (query.bpm) {
-      score += 12 * (1 - Math.min(1, Math.abs(track.bpm - query.bpm) / 60))
-    }
-
-    // Genre affinity — 14 points each, capped.
-    if (query.genres.length) {
-      const gHits = query.genres.filter((g) => g === track.genre).length
-      score += Math.min(28, gHits * 14)
-    }
-
-    // Mood tag affinity — 7 points each, capped.
-    if (query.moods.length) {
-      const mHits = track.mood.filter((m) => query.moods.includes(m)).length
-      score += Math.min(21, mHits * 7)
-    }
-
-    return { track, score }
-  })
-
-  scored.sort((a, b) => b.score - a.score)
-  return scored
-}
-
-export interface GeneratedPlaylist {
-  name: string
-  description: string
-  trackIds: string[]
-  query: MoodQuery
-}
-
-const NAME_TEMPLATES = [
-  'Настроение: {w}',
-  'Микс · {w}',
-  'Поток · {w}',
-  'Состояние: {w}',
-]
-
-export function generatePlaylist(description: string, limit = 24): GeneratedPlaylist {
-  const query = parseMood(description, limit)
-  const ranked = scoreTracks(query)
-  const trackIds = ranked.slice(0, limit).map((s) => s.track.id)
-
-  const keyWords = normalise(description)
-    .split(' ')
-    .filter((w) => w && !STOP_WORDS.has(w))
-    .slice(0, 3)
+/** Build the query string actually sent to iTunes/Audius. */
+export function buildSearchQuery(q: MoodQuery, raw: string): string {
+  if (q.terms.length) return q.terms.slice(0, 3).join(' ')
+  // fall back to the raw description with stop-words stripped
+  const cleaned = raw
+    .toLowerCase()
+    .replace(/[«»"'.,!?]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !STOP.has(w))
+    .slice(0, 4)
     .join(' ')
-
-  const template = NAME_TEMPLATES[keyWords.length % NAME_TEMPLATES.length]
-  const name = keyWords
-    ? template.replace('{w}', keyWords.charAt(0).toUpperCase() + keyWords.slice(1))
-    : 'Плейлист по настроению'
-
-  const parts: string[] = []
-  if (query.energy >= 70) parts.push('высокая энергия')
-  else if (query.energy <= 30) parts.push('спокойный темп')
-  else parts.push('средний темп')
-  if (query.valence >= 65) parts.push('светлое настроение')
-  else if (query.valence <= 35) parts.push('мрачноватая окраска')
-  if (query.genres.length) parts.push(query.genres.join(', ').toLowerCase())
-  if (query.bpm) parts.push(`≈ ${query.bpm} BPM`)
-
-  return {
-    name,
-    description: `Сгенерировано по запросу: «${description.trim()}». Профиль: ${parts.join(' · ')}.`,
-    trackIds,
-    query,
-  }
+  return cleaned || 'music'
 }
+
+const STOP = new Set([
+  'для', 'под', 'без', 'мне', 'очень', 'что-то', 'что', 'как', 'это', 'музыка', 'музыку', 'настроение',
+  'хочу', 'нужно', 'можно', 'если', 'чтобы', 'трек', 'треки', 'песня', 'песни', 'плейлист',
+  'for', 'the', 'and', 'with', 'without', 'music', 'songs', 'song', 'playlist', 'mood', 'some',
+])
