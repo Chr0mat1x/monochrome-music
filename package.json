@@ -8,7 +8,8 @@
     "dev:web": "vite --host 0.0.0.0 --port 12000",
     "server": "node server/index.mjs",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 12000"
+    "preview": "vite preview --host 0.0.0.0 --port 12000",
+    "build:apk": "bash scripts/build-apk.sh"
   },
   "dependencies": {
     "react": "^18.3.1",
