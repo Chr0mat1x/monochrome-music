@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Track } from '../types'
-import { searchAll, audiusTrending, deezerChart, deezerArtistPicture, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
+import { searchAll, audiusTrending, deezerChart, deezerArtistPicture, isPlayableTrack, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
 import { Cover } from '../components/Cover'
@@ -79,20 +79,24 @@ export function Home() {
     setLoading(true)
     ;(async () => {
       const [chart, trend, ...rest] = await Promise.all([
-        deezerChart(18),
-        audiusTrending(18),
-        ...ROWS.map((r) => searchAll(r.query, 12)),
+        deezerChart(24),
+        audiusTrending(24),
+        ...ROWS.map((r) => searchAll(r.query, 16)),
       ])
       if (cancelled) return
-      setCharts(chart)
-      setTrending(trend)
-      const built = ROWS.map((r, i) => ({ title: r.title, tracks: rest[i] ?? [] })).filter((r) => r.tracks.length)
+      const clean = (list: Track[]) => list.filter(isPlayableTrack)
+      const charts = clean(chart).slice(0, 18)
+      const trending = clean(trend).slice(0, 18)
+      const built = ROWS.map((r, i) => ({ title: r.title, tracks: clean(rest[i] ?? []).slice(0, 6) })).filter((r) => r.tracks.length)
+      setCharts(charts)
+      setTrending(trending)
       setRows(built)
-      register([...chart, ...trend, ...built.flatMap((r) => r.tracks)])
+      const shown = [...charts, ...trending, ...built.flatMap((r) => r.tracks)]
+      register(shown)
       setLoading(false)
       // Resolve full versions in the background so pressing play starts the
       // real song, not a 30-second cut.
-      void prefetchFullTracks([...chart, ...built.flatMap((r) => r.tracks)])
+      void prefetchFullTracks(shown)
     })()
     return () => {
       cancelled = true

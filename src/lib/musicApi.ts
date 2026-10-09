@@ -772,6 +772,25 @@ async function findSoundCloudTrack(artist: string, title: string): Promise<Track
 
 
 /* ------------------------------------------------------------------ *
+ * Track quality filter
+ * ------------------------------------------------------------------ */
+/** Uploads that are compilations rather than a song. */
+const PLAYLIST_TITLE = /\b(playlist|mashup|megamix|medley|non[- ]?stop|top \d+ hits?|mix\b|compilation|hits? \d{4})\b/i
+
+/**
+ * True when a track is a real song rather than filler that dominates catalogue
+ * searches: hour-long DJ sets, "Top 100 Hits" compilations, ".wav"-named
+ * placeholders and 15-second clips. A zero duration means the source did not
+ * report one, so it is kept.
+ */
+export function isPlayableTrack(t: Track): boolean {
+  if (t.duration && (t.duration < 45 || t.duration > 1200)) return false
+  if (PLAYLIST_TITLE.test(t.title)) return false
+  if (/\.(wav|mp3|m4a)$/i.test(t.title.trim())) return false
+  return true
+}
+
+/* ------------------------------------------------------------------ *
  * Combined search — Deezer first (best coverage + images), then
  * interleave iTunes and Audius, deduped by title+artist.
  * ------------------------------------------------------------------ */
