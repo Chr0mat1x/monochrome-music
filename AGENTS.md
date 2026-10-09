@@ -158,3 +158,17 @@ runs full-screen on a phone from the home screen.
 - `onError` for a `source: 'youtube'` or `source: 'soundcloud'` track tries
   `findSoundCloudFull` first, then `findAudiusFull`, then the `previewTrack`
   (30s) as the final fallback.
+- **Playability-aware matching.** `findSoundCloudTrack` walks its ranked
+  candidates with `resolveFullAudio(id, 'sc')` and returns the first one that
+  actually streams, because SoundCloud's official label uploads are
+  DRM-protected and never resolve. `resolveFullTrack` skips SoundCloud/BT
+  entirely when `hasAudioServer()` is false (the offline APK), going straight
+  to the YouTube IFrame player.
+- **Prefetch + broadcast.** `prefetchFullTracks(list)` resolves full versions
+  in the background (4 at a time); `upgradeToFullTrack` memoises results in
+  `fullTrackCache` and fires `subscribeFullTracks` listeners. Search/Artist/
+  Home/Generate subscribe and swap previews in place, and `startTrack` starts
+  an already-cached full version with no preview wait.
+- **Artist completeness.** `getArtist` pulls Deezer `/top?limit=100` and
+  `dedupeTracks` collapses live/remix/remaster editions to the studio original
+  (`baseTitle`/`versionRank`); `ArtistPage` renders up to 50 rows.
