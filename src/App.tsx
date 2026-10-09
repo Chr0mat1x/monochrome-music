@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { Player } from './components/Player'
+import { MobileNav } from './components/MobileNav'
 import { Home } from './pages/Home'
 import { Search } from './pages/Search'
 import { Generate } from './pages/Generate'
@@ -26,7 +27,7 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false)
 
   return (
-    <div className="flex h-screen w-screen gap-2 bg-ink-0 p-2">
+    <div className="flex h-[100dvh] w-screen flex-col gap-2 bg-ink-0 p-2 lg:flex-row">
       {/* desktop sidebar */}
       <div className="hidden w-64 shrink-0 lg:block">
         <Sidebar />
@@ -67,6 +68,8 @@ export default function App() {
         </div>
         <Player />
       </main>
+
+      <MobileNav />
     </div>
   )
 }

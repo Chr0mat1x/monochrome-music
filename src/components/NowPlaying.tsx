@@ -65,7 +65,10 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
       </div>
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-ink-0/70 via-ink-0/90 to-ink-0" />
 
-      <div className="relative z-10 flex items-center justify-between px-5 py-4">
+        <div
+          className="relative z-10 flex items-center justify-between px-5 pb-4"
+          style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
+        >
         <button className="icon-btn h-9 w-9" onClick={onClose} aria-label="Свернуть">
           <IconChevron width={24} height={24} className="rotate-90" />
         </button>
@@ -73,8 +76,11 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
         <span className="w-9" />
       </div>
 
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6 pb-10">
-        <div className="w-full max-w-sm">
+      <div
+        className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6"
+        style={{ paddingBottom: 'max(2.5rem, env(safe-area-inset-bottom))' }}
+      >
+        <div className="w-full max-w-[min(24rem,46dvh)]">
           <Cover seed={track.id} artwork={track.artwork} tone={track.valence} rounded="rounded-xl" className="aspect-square w-full shadow-2xl shadow-black" alt={track.title} />
         </div>
 

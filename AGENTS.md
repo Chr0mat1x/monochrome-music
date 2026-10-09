@@ -3,13 +3,34 @@
 ## What this is
 A Spotify-style music web app with a strict black-and-white design. There is
 no backend of our own: the catalogue is fetched live from public music APIs
-and streamed straight into the browser.
+and streamed straight into the browser. It ships as an installable PWA so it
+runs full-screen on a phone from the home screen.
 
 ## Stack
 - Vite + React 18 + TypeScript
 - Tailwind CSS (custom `ink` greyscale palette in `tailwind.config.js`)
 - Zustand for state (`src/store/useStore.ts`)
 - react-router-dom for routing
+- PWA: `public/manifest.webmanifest`, `public/sw.js`, icons in `public/`
+
+## Mobile / PWA
+- Installable: manifest + service worker (`sw.js`, shell-only caching; `/api`
+  and cross-origin calls always hit the network). The SW registers in
+  production builds only, so `npm run dev` is never served stale.
+- Layout is mobile-first: `MobileNav` (bottom tabs) on small screens, the
+  desktop sidebar from `lg` up; the top-level shell is a column on phones.
+- Safe areas: the app root, both players and the bottom nav use
+  `env(safe-area-inset-*)`; the shell is `h-[100dvh]` so the URL bar cannot
+  clip the player. The `Player` has a compact seek row on phones.
+- `scripts/gen-icons.mjs` regenerates `public/*.png` (no image deps — writes
+  PNGs via `zlib`). Run it after changing the brand mark.
+- Full-length audio on a phone: open the app from the phone over the LAN at
+  the Vite URL (e.g. `http://192.168.1.10:12000`) while `npm run dev` runs on
+  the computer. The relative `/api` calls are then proxied by Vite to the
+  yt-dlp server on that computer, so no extra config is needed. A static
+  `dist` served without Vite has no proxy, so set `MONO_SERVER_URL` to the
+  computer's LAN address at build time in that case. Carriers that block
+  YouTube are covered by the IFrame fallback.
 
 ## Commands
 - `npm run dev` — starts the local yt-dlp audio proxy *and* Vite together

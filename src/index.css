@@ -143,6 +143,42 @@ input[type='range'].mono-range:hover::-moz-range-thumb {
   opacity: 1;
 }
 
+/* ---------- mobile / installed app ---------- */
+.app-safe {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+  padding-left: max(0.5rem, env(safe-area-inset-left));
+  padding-right: max(0.5rem, env(safe-area-inset-right));
+}
+.nav-safe {
+  padding-left: max(0.25rem, env(safe-area-inset-left));
+  padding-right: max(0.25rem, env(safe-area-inset-right));
+}
+
+button,
+a {
+  touch-action: manipulation;
+}
+
+@media (hover: none) {
+  /* touch has no hover: keep the seek/volume thumbs visible */
+  input[type='range'].mono-range::-webkit-slider-thumb {
+    opacity: 1;
+  }
+  input[type='range'].mono-range::-moz-range-thumb {
+    opacity: 1;
+  }
+  input[type='range'].mono-range::-webkit-slider-runnable-track,
+  input[type='range'].mono-range::-moz-range-track {
+    height: 4px;
+  }
+}
+
+@media (display-mode: standalone) {
+  body {
+    overscroll-behavior: none;
+  }
+}
+
 .marquee-track {
   animation: marquee 14s linear infinite;
 }

@@ -105,18 +105,38 @@ export function Player() {
 
   return (
     <>
-      <footer className="z-40 border-t border-ink-25 bg-ink-5 px-3 py-2 sm:px-4">
+      <footer
+        className="z-40 shrink-0 border-t border-ink-25 bg-ink-5 px-3 py-2 sm:px-4"
+        style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+      >
         {playbackNote && (
           <div className="mb-2 border border-ink-25 px-3 py-1 text-center text-[11px] text-ink-70">
             {playbackNote}
           </div>
         )}
+        {/* compact seek for phones, above the transport row */}
+        <input
+          type="range"
+          className="mono-range mb-1 h-3 w-full sm:hidden"
+          min={0}
+          max={duration || 1}
+          step={0.5}
+          value={shownPos}
+          style={{ ['--fill' as any]: `${shownProgress}%` }}
+          onChange={(e) => setScrubbing(Number(e.target.value))}
+          onPointerUp={() => {
+            if (scrubbing !== null) seek(scrubbing)
+            setScrubbing(null)
+          }}
+          disabled={!track}
+          aria-label="Позиция"
+        />
         <div className="grid grid-cols-[1fr_auto] items-center gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)]">
           <div className="flex min-w-0 items-center gap-3">
             {track ? (
               <>
                 <button
-                  className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md"
+                  className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md sm:h-14 sm:w-14"
                   onClick={() => setNowPlayingOpen(true)}
                   aria-label="Открыть плеер"
                 >
