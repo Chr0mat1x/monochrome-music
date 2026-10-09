@@ -144,6 +144,10 @@ input[type='range'].mono-range:hover::-moz-range-thumb {
 }
 
 /* ---------- mobile / installed app ---------- */
+/* Real artwork is desaturated so the UI stays strictly black-and-white. */
+.mono-media {
+  filter: grayscale(1) contrast(1.08) brightness(0.96);
+}
 .app-safe {
   padding-top: max(0.5rem, env(safe-area-inset-top));
   padding-left: max(0.5rem, env(safe-area-inset-left));

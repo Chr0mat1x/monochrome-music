@@ -149,7 +149,7 @@ export function Cover({ seed, artwork, tone = 40, className = '', rounded = 'rou
             decoding="async"
             onLoad={() => setLoaded(true)}
             onError={() => setFailed(true)}
-            className={`absolute inset-0 h-full w-full object-cover ${rounded} transition-opacity duration-500 ${
+            className={`absolute inset-0 h-full w-full object-cover mono-media ${rounded} transition-opacity duration-500 ${
               loaded ? 'opacity-100' : 'opacity-0'
             }`}
           />

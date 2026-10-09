@@ -174,6 +174,54 @@ export async function deezerArtistPicture(name: string): Promise<string | null> 
   return info?.picture ?? null
 }
 
+/** Strip tracking params and ask Wikimedia for a bigger rendition. */
+function cleanWikiImage(url: string): string {
+  const base = url.split('?')[0]
+  return base.replace(/\/\d+px-/, '/1000px-')
+}
+
+function normalizeName(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+const wikiPicCache = new Map<string, string | null>()
+
+/**
+ * Wikipedia portrait — a second source that covers artists Deezer lacks, and
+ * often a nicer photo for the ones it has. Title-checked so a search miss
+ * cannot attach the wrong person's face.
+ */
+async function wikipediaArtistPicture(name: string): Promise<string | null> {
+  const key = name.toLowerCase()
+  if (wikiPicCache.has(key)) return wikiPicCache.get(key) ?? null
+  try {
+    const api = 'https://en.wikipedia.org/w/api.php'
+    const q = `${api}?action=query&generator=search&gsrsearch=${encodeURIComponent(name)}&gsrlimit=3&prop=pageimages&piprop=thumbnail&pithumbsize=1000&format=json&origin=*`
+    const data = await jsonFetch<any>(q, 9000)
+    const pages: any[] = Object.values(data?.query?.pages ?? {})
+    const match = pages.find((p) => normalizeName(p?.title ?? '') === normalizeName(name))
+    const src: string | undefined = match?.thumbnail?.source
+    const pic = src ? cleanWikiImage(src) : null
+    if (pic) artistPictures.set(key, pic)
+    wikiPicCache.set(key, pic)
+    return pic
+  } catch {
+    wikiPicCache.set(key, null)
+    return null
+  }
+}
+
+/** Best available portrait: Deezer first, Wikipedia as a fallback/upgrade. */
+export async function artistImage(name: string): Promise<string | null> {
+  const dz = await deezerArtistPicture(name).catch(() => null)
+  if (dz) return dz
+  return wikipediaArtistPicture(name)
+}
+
 function mapDeezer(t: any): Track | null {
   if (!t || !t.id || !t.title) return null
   rememberArtistPicture(t.artist?.name, t.artist?.picture_xl || t.artist?.picture_big || t.artist?.picture_medium)
@@ -683,14 +731,21 @@ export async function getArtist(name: string): Promise<{ artist: Artist; tracks:
   const albumArt = new Map<string, string>()
   for (const a of realAlbums) if (a.artwork) albumArt.set(a.title.toLowerCase(), a.artwork)
 
+  // prefer a real portrait; fall back to Wikipedia, then album art
+  let picture: string | null =
+    info?.picture ?? artistPictures.get(name.toLowerCase()) ?? null
+  if (!picture) {
+    picture = await wikipediaArtistPicture(name).catch(() => null)
+  }
+  if (!picture) picture = pool.find((t) => t.artwork)?.artwork ?? null
+
   const artist: Artist = {
     id: info?.id ? `ar-dz-${info.id}` : `ar-${hash(name)}`,
     name,
     genres: Array.from(new Set(pool.map((t) => t.genre).filter(Boolean))).slice(0, 3),
     bio: `${titleCase(name)} — реальный артист из каталогов Deezer, iTunes и Audius. Здесь собраны доступные треки и релизы, найденные вживую по запросу.`,
     monthly: info?.fans && info.fans > 0 ? info.fans : 100_000 + (hash(name) % 4_000_000),
-    // prefer a real portrait; fall back to album art only if none exists
-    picture: info?.picture ?? artistPictures.get(name.toLowerCase()) ?? pool.find((t) => t.artwork)?.artwork ?? null,
+    picture,
   }
   // Deezer lists re-issues and editions separately; collapse them by title
   const uniqueAlbums = realAlbums.filter(
