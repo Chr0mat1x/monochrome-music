@@ -1,5 +1,21 @@
 # MONOCHROME — AGENTS.md
 
+## Session snapshot (2026-10-08)
+Work is committed on `master` (HEAD `56636a1`), working tree clean.
+- Full-length playback: SoundCloud via the local yt-dlp proxy (`/api`), with a
+  playability-checked matcher that skips DRM-protected label uploads; your
+  machine's proxy handles it, the hosted site streams through `/api`.
+- Artist pages pull up to 100 Deezer tracks, deduped to studio editions, 50 rows.
+- Mood generator reads the description (`src/lib/moodPlanner.ts`) and composes
+  queries; live profile preview as you type.
+- To resume locally: `npm run dev` (starts the yt-dlp proxy + Vite on :12000).
+  Rebuild the phone app with `npm run build:apk` (needs `ANDROID_HOME` + JDK).
+- Known limit on this host: YouTube returns "Sign in to confirm you're not a
+  bot" for anonymous datacenter IPs; SoundCloud is the reliable full-song path.
+  On a phone/home IP the YouTube IFrame player works.
+- Live links: site https://work-1-bcnpsrwlxctxiqwy.prod-runtime.all-hands.dev/ ,
+  APK at …/MONOCHROME.apk (served from `downloads/`).
+
 ## What this is
 A Spotify-style music web app with a strict black-and-white design. There is
 no backend of our own: the catalogue is fetched live from public music APIs
