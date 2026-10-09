@@ -27,10 +27,11 @@ runs full-screen on a phone from the home screen.
 - Full-length audio on a phone: open the app from the phone over the LAN at
   the Vite URL (e.g. `http://192.168.1.10:12000`) while `npm run dev` runs on
   the computer. The relative `/api` calls are then proxied by Vite to the
-  yt-dlp server on that computer, so no extra config is needed. A static
-  `dist` served without Vite has no proxy, so set `MONO_SERVER_URL` to the
-  computer's LAN address at build time in that case. Carriers that block
-  YouTube are covered by the IFrame fallback.
+  yt-dlp server on that computer, so no extra config is needed and full songs
+  come from SoundCloud (which streams from any IP). A static `dist` served
+  without Vite has no proxy, so set `MONO_SERVER_URL` to the computer's LAN
+  address at build time in that case. The bundled APK has no server of its
+  own, so it falls back to the YouTube IFrame player for full tracks.
 
 ## Commands
 - `npm run build:apk` — builds an installable, debug-signed Android APK
@@ -63,11 +64,18 @@ runs full-screen on a phone from the home screen.
 - **Audius** (`api.audius.co` → discovery host) — decentralised, CC-licensed
   full-length streams. `preview: false`. Stream URLs are signed on demand, so
   they are resolved lazily at play time via `resolveAudiusStream`.
+- **SoundCloud** (via the audio server) — full-length streams that work from
+  any IP, including datacenter hosts where YouTube refuses anonymous playback.
+  This is the primary full-song source. `preview: false`, `source:
+  'soundcloud'`.
 - **Deezer has no CORS headers** on `api.deezer.com`; a plain `fetch()` is
   blocked. We go through `jsonp()` instead, which injects a `<script>` with
   `output=jsonp&callback=…`. This is the one source that is not `fetch`-based;
   do not "fix" it back to `fetch` or Deezer silently returns nothing.
 - iTunes and Audius send `Access-Control-Allow-Origin: *`. Do not proxy them.
+- SoundCloud search/resolve runs server-side (yt-dlp `scsearch`); the browser
+  never talks to SoundCloud directly. `http_mp3` is chosen because a browser
+  `<audio>` element cannot play SoundCloud's HLS manifest.
 - No API exposes energy/valence/tempo. `inferProfile(genre, seed)` derives
   those axes from genre keywords — this is the input the mood engine scores on.
 - Track payloads embed the artist portrait; `mapDeezer` caches it in
@@ -114,24 +122,30 @@ runs full-screen on a phone from the home screen.
   track carries `previewTrack` so `onError` can fall back to the preview and
   set `playbackNote` if the stream is refused (bot check / region block).
 - `upgradeToFullTrack` tries sources in this order:
-  1. **YouTube** (`findYouTubeTrack` → Piped search). With the local server it
-     walks the ranked list for a video that actually resolves (time-bounded);
-     without it, or when every probe is refused, it still returns the best
-     match for the IFrame player (works from a residential IP). `preview:
-     false`, `source: 'youtube'`.
-  2. **Audius** (`findAudiusFull` → `searchAudius`). A whole-song stream that
-     works from any IP, so it is the reliable full-length fallback when YouTube
-     refuses anonymous playback (datacenter IPs, bot check). Matches are
-     title/artist-checked and covers/remixes are penalised; the Deezer/iTunes
-     artwork is kept. `preview: false`, `source: 'audius'`.
+  1. **SoundCloud** (`findSoundCloudTrack` → `searchSoundCloud`, both via the
+     audio server). Streams progressive MP3 from any IP, so it is the source
+     that actually keeps full songs working in the hosted app. Matches are
+     title/artist-checked, snippets under 65s are dropped and covers/remixes
+     penalised; the Deezer/iTunes artwork is kept. `preview: false`,
+     `source: 'soundcloud'`.
+  2. **YouTube** (`findYouTubeTrack` → server yt-dlp search). With the local
+     server it walks the ranked list for a video that actually resolves
+     (time-bounded); without it, or when every probe is refused, it still
+     returns the best match for the IFrame player (works from a residential
+     IP). `preview: false`, `source: 'youtube'`.
+  3. **Audius** (`findAudiusFull` → `searchAudius`). Whole-song streams, but
+     the mainstream catalogue is mostly covers, so it is the last resort.
+     Matches are title/artist-checked and covers/remixes are penalised; the
+     Deezer/iTunes artwork is kept. `preview: false`, `source: 'audius'`.
   Returning `null` means nothing full-length exists, and the 30s preview stays.
 - YouTube audio has two backends, tried in this order in `AudioEngine.load`:
   1. **Local yt-dlp server** (`server/index.mjs`, reached at `/api`): the
      listener's own machine resolves the direct audio URL and streams it, so
      full-length playback works and flows through the Web Audio analyser.
      `hasAudioServer()` probes `/api/health` once per session;
-     `resolveFullAudio(videoId)` confirms a specific video via `/api/resolve`
-     and returns the `/api/audio?id=…` URL. `upgradeToFullTrack` stores that
+     `resolveFullAudio(id, src)` confirms a specific source via `/api/resolve`
+     and returns the `/api/audio?src=…&id=…` URL (`src` is `'yt'` for YouTube,
+     `'sc'` for SoundCloud). `upgradeToFullTrack` stores that
      URL on `streamUrl`, and the engine resolves it lazily for YouTube tracks
      that lack one. `directUrl` proves the URL with a one-byte ranged request
      before reporting success: `yt-dlp --get-url` prints a URL even when
@@ -141,5 +155,6 @@ runs full-screen on a phone from the home screen.
      on a home connection.
   2. **IFrame player** (`src/lib/youtube.ts`): fallback when the local server
      is absent or cannot pull the video. No analyser for these tracks.
-- `onError` for a `source: 'youtube'` track tries `findAudiusFull` first, then
-  the `previewTrack` (30s) as the final fallback.
+- `onError` for a `source: 'youtube'` or `source: 'soundcloud'` track tries
+  `findSoundCloudFull` first, then `findAudiusFull`, then the `previewTrack`
+  (30s) as the final fallback.
