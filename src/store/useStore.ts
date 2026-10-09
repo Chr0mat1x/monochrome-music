@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Playlist, RepeatMode, Track } from '../types'
 import { engine } from '../lib/audioEngine'
-import { inferProfile, upgradeToFullTrack } from '../lib/musicApi'
+import { findAudiusFull, inferProfile, upgradeToFullTrack } from '../lib/musicApi'
 
 const LS_KEY = 'monochrome.v2'
 
@@ -435,13 +435,50 @@ engine.setEvents({
   onError: () => {
     const state = useStore.getState()
     const cur = state.currentTrack
-    // A YouTube embed can be refused (bot check, region block, embed disabled).
-    // Fall back to the commercial preview instead of dropping the song.
-    if (cur && cur.source === 'youtube' && cur.previewTrack) {
+    // A YouTube embed/stream can be refused (bot check, region block, blocked
+    // datacenter IP). Before dropping to the 30-second preview, look for a
+    // full-length Audius upload, which streams whole songs from any IP.
+    if (cur && cur.source === 'youtube') {
       const preview = cur.previewTrack
-      const queue = state.queue.map((t) => (t.id === cur.id ? preview : t))
-      useStore.setState({ currentTrack: preview, queue, playbackNote: 'Полная версия недоступна — играет превью 30 секунд' })
-      void engine.load(preview, true)
+      void findAudiusFull(cur.artist, cur.title)
+        .then(async (full) => {
+          if (useStore.getState().currentTrack?.id !== cur.id) return
+          if (full) {
+            const queue = state.queue.map((t) => (t.id === cur.id ? full : t))
+            useStore.getState().register([full])
+            useStore.setState({ currentTrack: full, queue, playbackNote: null })
+            void engine.load(full, true)
+            return
+          }
+          // Nothing full-length anywhere → fall back to the commercial preview.
+          if (preview) {
+            const queue = state.queue.map((t) => (t.id === cur.id ? preview : t))
+            useStore.setState({
+              currentTrack: preview,
+              queue,
+              playbackNote: 'Полная версия недоступна — играет превью 30 секунд',
+            })
+            void engine.load(preview, true)
+            return
+          }
+          if (useStore.getState().playing) state.next(true)
+          else useStore.setState({ playing: false, loading: false })
+        })
+        .catch(() => {
+          if (preview) {
+            const queue = state.queue.map((t) => (t.id === cur.id ? preview : t))
+            useStore.setState({
+              currentTrack: preview,
+              queue,
+              playbackNote: 'Полная версия недоступна — играет превью 30 секунд',
+            })
+            void engine.load(preview, true)
+          } else if (state.playing) {
+            state.next(true)
+          } else {
+            useStore.setState({ playing: false, loading: false })
+          }
+        })
       return
     }
     // Move on rather than getting stuck on a broken stream.

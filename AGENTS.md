@@ -96,13 +96,24 @@ runs full-screen on a phone from the home screen.
   because the media hosts send permissive CORS headers; if that fetch is
   blocked it falls back to opening the raw URL.
 - Full-length playback: commercial Deezer/iTunes tracks are 30s previews. On
-  play, `startTrack` fires `upgradeToFullTrack` (Piped → YouTube search) and
-  hot-swaps in the full video, keeping the position; in-flight lookups are
-  deduped in an `upgrades` Map. `upgradeToFullTrack` returns `null` when there
-  is no match (do not treat an unchanged id as a miss — it keeps the original
-  id on purpose). The swapped track carries `previewTrack` so `onError` can
-  fall back to the preview and set `playbackNote` if the embed is refused
-  (bot check / region block).
+  play, `startTrack` fires `upgradeToFullTrack` and hot-swaps in the full
+  track, keeping the position; in-flight lookups are deduped in an `upgrades`
+  Map. `upgradeToFullTrack` returns `null` when there is no match (do not treat
+  an unchanged id as a miss — it keeps the original id on purpose). The swapped
+  track carries `previewTrack` so `onError` can fall back to the preview and
+  set `playbackNote` if the stream is refused (bot check / region block).
+- `upgradeToFullTrack` tries sources in this order:
+  1. **YouTube** (`findYouTubeTrack` → Piped search). With the local server it
+     walks the ranked list for a video that actually resolves (time-bounded);
+     without it, or when every probe is refused, it still returns the best
+     match for the IFrame player (works from a residential IP). `preview:
+     false`, `source: 'youtube'`.
+  2. **Audius** (`findAudiusFull` → `searchAudius`). A whole-song stream that
+     works from any IP, so it is the reliable full-length fallback when YouTube
+     refuses anonymous playback (datacenter IPs, bot check). Matches are
+     title/artist-checked and covers/remixes are penalised; the Deezer/iTunes
+     artwork is kept. `preview: false`, `source: 'audius'`.
+  Returning `null` means nothing full-length exists, and the 30s preview stays.
 - YouTube audio has two backends, tried in this order in `AudioEngine.load`:
   1. **Local yt-dlp server** (`server/index.mjs`, reached at `/api`): the
      listener's own machine resolves the direct audio URL and streams it, so
@@ -111,7 +122,13 @@ runs full-screen on a phone from the home screen.
      `resolveFullAudio(videoId)` confirms a specific video via `/api/resolve`
      and returns the `/api/audio?id=…` URL. `upgradeToFullTrack` stores that
      URL on `streamUrl`, and the engine resolves it lazily for YouTube tracks
-     that lack one. YouTube blocks anonymous stream access from datacenter
-     IPs, so this backend is what makes it work on a home connection.
+     that lack one. `directUrl` proves the URL with a one-byte ranged request
+     before reporting success: `yt-dlp --get-url` prints a URL even when
+     YouTube will refuse the stream, so without the probe a blocked video
+     looked "available" and then failed silently. YouTube blocks anonymous
+     stream access from datacenter IPs, so this backend is what makes it work
+     on a home connection.
   2. **IFrame player** (`src/lib/youtube.ts`): fallback when the local server
      is absent or cannot pull the video. No analyser for these tracks.
+- `onError` for a `source: 'youtube'` track tries `findAudiusFull` first, then
+  the `previewTrack` (30s) as the final fallback.

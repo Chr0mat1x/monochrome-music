@@ -79,6 +79,15 @@ async function directUrl(videoId) {
   ])
   const url = out.split('\n').map((l) => l.trim()).find(Boolean)
   if (!url) throw new Error('yt-dlp returned no URL')
+  // `--get-url` happily prints a URL even when YouTube will refuse the actual
+  // stream (bot check, datacenter IP, region block). Prove the URL plays with a
+  // one-byte ranged request before caching or handing it to the client, so a
+  // blocked video reports "unavailable" instead of a silent playback failure.
+  const probe = await fetch(url, { headers: { range: 'bytes=0-1' } }).catch(() => null)
+  if (!probe || !probe.ok || !probe.body) {
+    throw new Error(`stream unavailable (HTTP ${probe ? probe.status : 'network error'})`)
+  }
+  probe.body.cancel().catch(() => {})
   urlCache.set(videoId, { url, expires: Date.now() + URL_TTL })
   return url
 }

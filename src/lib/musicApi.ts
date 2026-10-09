@@ -566,17 +566,67 @@ export async function findYouTubeTrack(artist: string, title: string): Promise<T
   if (!results.length) return null
   const ranked = rankYouTube(results, artist, title)
 
-  // When the local audio server is available, YouTube's own availability is
-  // what matters: official uploads are often region/IP-blocked while a
-  // re-upload plays fine, so walk the ranked list until one resolves.
+  // When the local audio server is available, prefer a video it can actually
+  // stream (analyser intact). Official uploads are often region/IP-blocked
+  // while a re-upload plays fine, so walk the ranked list — but time-bounded,
+  // because a blocked IP makes every probe slow.
   if (await hasAudioServer()) {
-    for (const candidate of ranked) {
+    const deadline = Date.now() + 7000
+    for (const candidate of ranked.slice(0, 6)) {
       if (await resolveFullAudio(candidate.sourceId)) return candidate
+      if (Date.now() > deadline) break
     }
-    return null
   }
+  // Server absent, or every probe refused: still hand the best match to the
+  // official IFrame player, which can play the full video from the listener's
+  // own (residential) IP even when this machine's requests are blocked.
   return ranked[0]
 }
+
+/* ------------------------------------------------------------------ *
+ * Audius full-track fallback
+ *
+ * Audius streams whole songs (never 30-second clips) and works from any IP,
+ * so it is the reliable full-length source when YouTube refuses anonymous
+ * playback (datacenter IPs, "confirm you're not a bot", region blocks).
+ * ------------------------------------------------------------------ */
+const audiusMatchCache = new Map<string, Promise<Track | null>>()
+
+/** Search Audius and keep only titles that really belong to this song. */
+async function findAudiusTrack(artist: string, title: string): Promise<Track | null> {
+  const results = await searchAudius(`${artist} ${title}`, 12).catch(() => [])
+  const wantTitle = cleanName(title)
+  const wantArtist = cleanName(artist)
+  const scored = results
+    .map((t) => {
+      const ct = cleanName(t.title)
+      const ca = cleanName(t.artist)
+      let score = 0
+      if (ct === wantTitle) score += 4
+      else if (ct.includes(wantTitle) || wantTitle.includes(ct)) score += 2
+      if (ca === wantArtist) score += 3
+      else if (ca.includes(wantArtist) || wantArtist.includes(ca)) score += 1
+      // prefer uploads closest to the original over covers/remixes/bootlegs
+      if (/cover|remix|flip|bootleg|mashup|sped up|slowed|instrumental|karaoke/i.test(t.title)) {
+        score -= 2
+      }
+      return { t, score }
+    })
+    .filter((s) => s.score >= 2) // title or artist must genuinely line up
+    .sort((a, b) => b.score - a.score)
+  return scored[0]?.t ?? null
+}
+
+/** Look up the full-length Audius upload matching a commercial track. */
+export function findAudiusFull(artist: string, title: string): Promise<Track | null> {
+  const key = `${artist}|${title}`.toLowerCase()
+  const cached = audiusMatchCache.get(key)
+  if (cached) return cached
+  const task = findAudiusTrack(artist, title)
+  audiusMatchCache.set(key, task)
+  return task
+}
+
 
 /* ------------------------------------------------------------------ *
  * Combined search — Deezer first (best coverage + images), then
@@ -619,22 +669,29 @@ export async function searchAll(query: string, limit = 40): Promise<Track[]> {
  */
 export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
   if (track.source !== 'deezer' && track.source !== 'itunes') return null
+  // Prefer a YouTube upload (widest catalogue). With the local yt-dlp server
+  // it streams through the analyser; otherwise the IFrame player handles it.
   const match = await findYouTubeTrack(track.artist, track.title).catch(() => null)
-  if (!match) return null
-  // Prefer direct audio (local yt-dlp server) so the track flows through the
-  // analyser; when it is unavailable we keep streamUrl null and the engine
-  // falls back to the IFrame player.
-  const streamUrl = await resolveFullAudio(match.sourceId).catch(() => null)
-  return {
-    ...track,
-    source: 'youtube',
-    sourceId: match.sourceId,
-    streamUrl,
-    preview: false,
-    previewTrack: track,
-    // the music video usually runs longer than the album cut
-    duration: match.duration || track.duration,
+  if (match) {
+    const streamUrl = await resolveFullAudio(match.sourceId).catch(() => null)
+    return {
+      ...track,
+      source: 'youtube',
+      sourceId: match.sourceId,
+      streamUrl,
+      preview: false,
+      previewTrack: track,
+      // the music video usually runs longer than the album cut
+      duration: match.duration || track.duration,
+    }
   }
+  // No video (or it is unavailable): use an Audius full track, which streams
+  // whole songs from any IP. Keep the nicer Deezer/iTunes artwork.
+  const audius = await findAudiusFull(track.artist, track.title).catch(() => null)
+  if (audius) {
+    return { ...audius, artwork: track.artwork || audius.artwork, previewTrack: track }
+  }
+  return null
 }
 
 /* ------------------------------------------------------------------ *
