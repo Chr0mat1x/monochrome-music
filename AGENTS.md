@@ -1,15 +1,24 @@
 # MONOCHROME — AGENTS.md
 
 ## Session snapshot (2026-10-08)
-Work is committed on `master` (HEAD `56636a1`), working tree clean.
+Work is committed on `master` (HEAD `b5e6a09`), working tree clean.
 - Full-length playback: SoundCloud via the local yt-dlp proxy (`/api`), with a
   playability-checked matcher that skips DRM-protected label uploads; your
   machine's proxy handles it, the hosted site streams through `/api`.
 - Artist pages pull up to 100 Deezer tracks, deduped to studio editions, 50 rows.
 - Mood generator reads the description (`src/lib/moodPlanner.ts`) and composes
   queries; live profile preview as you type.
+- `isPlayableTrack` (`src/lib/musicApi.ts`) strips catalogue filler — "Top 100
+  Hits" compilations, hour-long DJ sets, `.wav` placeholders, sub-45s clips —
+  on Home, Search and the mood generator.
 - To resume locally: `npm run dev` (starts the yt-dlp proxy + Vite on :12000).
-  Rebuild the phone app with `npm run build:apk` (needs `ANDROID_HOME` + JDK).
+- A container restart wipes the toolchain, so reinstall before building the app:
+  - `pip install yt-dlp` (full-length audio proxy needs it),
+  - JDK 21 at `/home/openhands/jdk` (Temurin),
+  - Android SDK at `/home/openhands/android-sdk` (cmdline-tools `latest`,
+    platform-tools, platforms;android-35, build-tools;35.0.0).
+  Then `JAVA_HOME=/home/openhands/jdk ANDROID_HOME=/home/openhands/android-sdk
+  npm run build:apk`.
 - Known limit on this host: YouTube returns "Sign in to confirm you're not a
   bot" for anonymous datacenter IPs; SoundCloud is the reliable full-song path.
   On a phone/home IP the YouTube IFrame player works.
