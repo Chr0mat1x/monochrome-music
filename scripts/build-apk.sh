@@ -22,6 +22,9 @@ cd android
 ./gradlew assembleRelease --no-daemon
 
 APK="$ROOT/android/app/build/outputs/apk/release/app-release.apk"
-cp "$APK" "$ROOT/public/MONOCHROME.apk"
+# Served by the audio proxy at /MONOCHROME.apk. Kept out of public/ so Vite
+# does not bundle the APK into the web build (which the app itself embeds).
+mkdir -p "$ROOT/downloads"
+cp "$APK" "$ROOT/downloads/MONOCHROME.apk"
 echo "==> Done: $APK"
 ls -lh "$APK"

@@ -30,6 +30,8 @@ export interface Track {
   permalink: string | null
   /** The commercial preview this full-length track replaced, for fallback. */
   previewTrack?: Track
+  /** False when the source reports the upload cannot be streamed. */
+  streamable?: boolean
 }
 
 export interface Album {

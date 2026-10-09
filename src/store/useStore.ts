@@ -440,14 +440,25 @@ engine.setEvents({
     // full-length Audius upload, which streams whole songs from any IP.
     if (cur && cur.source === 'youtube') {
       const preview = cur.previewTrack
+      const base = preview || cur // keep the original title/artist/artwork
       void findAudiusFull(cur.artist, cur.title)
         .then(async (full) => {
           if (useStore.getState().currentTrack?.id !== cur.id) return
           if (full) {
-            const queue = state.queue.map((t) => (t.id === cur.id ? full : t))
-            useStore.getState().register([full])
-            useStore.setState({ currentTrack: full, queue, playbackNote: null })
-            void engine.load(full, true)
+            const swapped: Track = {
+              ...base,
+              source: 'audius',
+              sourceId: full.sourceId,
+              streamUrl: full.streamUrl,
+              permalink: full.permalink,
+              preview: false,
+              previewTrack: preview,
+              duration: base.duration || full.duration,
+            }
+            const queue = state.queue.map((t) => (t.id === cur.id ? swapped : t))
+            useStore.getState().register([swapped])
+            useStore.setState({ currentTrack: swapped, queue, playbackNote: null })
+            void engine.load(swapped, true)
             return
           }
           // Nothing full-length anywhere → fall back to the commercial preview.

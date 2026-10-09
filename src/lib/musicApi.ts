@@ -289,9 +289,20 @@ export interface DeezerArtistInfo {
 }
 
 export async function deezerArtistInfo(name: string): Promise<DeezerArtistInfo | null> {
-  const data = await jsonp<{ data: any[] }>(`${DEEZER}/search/artist?q=${encodeURIComponent(name)}&limit=1`)
-  const a = data?.data?.[0]
-  if (!a) return null
+  // Deezer returns several homonyms for one word ("Queen" yields eight), and
+  // the famous act is not always first — the legendary Queen sits behind
+  // artists with a few hundred fans. Fetch a page of candidates and pick the
+  // exact-name match with the largest audience, so the artist page lands on
+  // the act the listener actually meant.
+  const data = await jsonp<{ data: any[] }>(
+    `${DEEZER}/search/artist?q=${encodeURIComponent(name)}&limit=25`,
+  )
+  const candidates: any[] = data?.data ?? []
+  if (!candidates.length) return null
+  const want = cleanName(name)
+  const exact = candidates.filter((a) => cleanName(a.name) === want)
+  const pool = exact.length ? exact : candidates
+  const a = pool.reduce((best, cur) => ((cur.nb_fan ?? 0) > (best.nb_fan ?? 0) ? cur : best))
   return {
     id: String(a.id),
     name: a.name,
@@ -434,6 +445,7 @@ function mapAudius(t: any): Track | null {
     preview: false,
     sourceId: String(t.id),
     permalink: t.permalink ? `https://audius.co${t.permalink}` : null,
+    streamable: t.is_streamable !== false,
   }
 }
 
@@ -547,13 +559,24 @@ function rankYouTube(results: Track[], artist: string, title: string): Track[] {
     .map((t) => {
       const ct = cleanName(t.title)
       const ca = cleanName(t.artist)
+      // Drop the artist-name prefix that uploads habitually prepend
+      // ("Queen Bohemian Rhapsody") so the song name is compared cleanly.
+      const bare = ct.startsWith(`${wantArtist} `) ? ct.slice(wantArtist.length + 1).trim() : ct
       let score = 0
-      if (ct === wantTitle) score += 4
-      else if (ct.includes(wantTitle) || wantTitle.includes(ct)) score += 2
+      if (bare === wantTitle || ct === wantTitle) score += 4
+      else if (bare.includes(wantTitle) || wantTitle.includes(bare)) score += 2
       if (ca === wantArtist) score += 3
       else if (ca.includes(wantArtist) || wantArtist.includes(ca)) score += 1
       // official uploads name the channel after the artist
       if (/topic|official|vevo/i.test(t.artist)) score += 1
+      // Uploaders append tags ("… (Bateria) & Chupetas", "lyrics", "HD"), so
+      // every word beyond the song name hints at a re-upload — nudge it down
+      // so the genuine video wins even without an official channel match.
+      const extra = bare.split(' ').length - wantTitle.split(' ').length
+      if (extra > 0) score -= extra
+      if (/cover|remix|flip|bootleg|mashup|sped up|slowed|instrumental|karaoke|8d/i.test(t.title)) {
+        score -= 2
+      }
       return { t, score }
     })
     .sort((a, b) => b.score - a.score)
@@ -601,18 +624,27 @@ async function findAudiusTrack(artist: string, title: string): Promise<Track | n
     .map((t) => {
       const ct = cleanName(t.title)
       const ca = cleanName(t.artist)
+      // An artist-name prefix in the upload title ("Queen Bohemian Rhapsody")
+      // is noise, not a different song — strip it before comparing.
+      const bare = ct.startsWith(`${wantArtist} `) ? ct.slice(wantArtist.length + 1).trim() : ct
       let score = 0
-      if (ct === wantTitle) score += 4
-      else if (ct.includes(wantTitle) || wantTitle.includes(ct)) score += 2
+      if (bare === wantTitle || ct === wantTitle) score += 4
+      else if (bare.includes(wantTitle) || wantTitle.includes(bare)) score += 2
+      else return { t, score: -1 } // title does not line up at all
       if (ca === wantArtist) score += 3
       else if (ca.includes(wantArtist) || wantArtist.includes(ca)) score += 1
-      // prefer uploads closest to the original over covers/remixes/bootlegs
+      // prefer the original over covers/remixes/bootlegs
       if (/cover|remix|flip|bootleg|mashup|sped up|slowed|instrumental|karaoke/i.test(t.title)) {
         score -= 2
       }
+      // Every word beyond the song name is usually a remix/upload tag, so
+      // penalise it: a noisy re-upload must never outrank the real song. This
+      // is what let "Bohemian Rhapsody kikechacin & Chupetas…" win before.
+      const extra = bare.split(' ').length - wantTitle.split(' ').length
+      if (extra > 0) score -= extra
       return { t, score }
     })
-    .filter((s) => s.score >= 2) // title or artist must genuinely line up
+    .filter((s) => s.score >= 2 && s.t.streamable !== false)
     .sort((a, b) => b.score - a.score)
   return scored[0]?.t ?? null
 }
@@ -686,10 +718,20 @@ export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
     }
   }
   // No video (or it is unavailable): use an Audius full track, which streams
-  // whole songs from any IP. Keep the nicer Deezer/iTunes artwork.
+  // whole songs from any IP. Keep the Deezer/iTunes metadata (title, artist,
+  // album, artwork) so the player never starts showing some re-upload's title.
   const audius = await findAudiusFull(track.artist, track.title).catch(() => null)
   if (audius) {
-    return { ...audius, artwork: track.artwork || audius.artwork, previewTrack: track }
+    return {
+      ...track,
+      source: 'audius',
+      sourceId: audius.sourceId,
+      streamUrl: audius.streamUrl,
+      permalink: audius.permalink,
+      preview: false,
+      previewTrack: track,
+      duration: track.duration || audius.duration,
+    }
   }
   return null
 }

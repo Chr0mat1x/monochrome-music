@@ -14,6 +14,7 @@ export default defineConfig({
     hmr: { clientPort: 443 },
     proxy: {
       '/api': { target: AUDIO_SERVER, changeOrigin: true },
+      '/MONOCHROME.apk': { target: AUDIO_SERVER, changeOrigin: true },
     },
   },
   preview: {

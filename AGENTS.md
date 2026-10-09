@@ -36,13 +36,14 @@ runs full-screen on a phone from the home screen.
 - `npm run build:apk` — builds an installable, debug-signed Android APK
   (`scripts/build-apk.sh`). Requires JDK 17+ and `ANDROID_HOME`; it rebuilds the
   web bundle, copies `dist/` into `android/app/src/main/assets/`, runs
-  `./gradlew assembleRelease`, and publishes the result at
-  `public/MONOCHROME.apk` (downloadable from the running app at
-  `/MONOCHROME.apk`). The Android project is a thin WebView shell
-  (`android/`): it serves the bundle over an https origin via
-  WebViewAssetLoader so the YouTube IFrame full-track path works — do not move
-  it back to `file://`. The APK is debug-signed for easy sideloading, not for
-  store distribution.
+  `./gradlew assembleRelease`, and copies the result to `downloads/MONOCHROME.apk`.
+  The audio proxy serves it at `/MONOCHROME.apk` (Vite proxies that path in dev),
+  so it is downloadable from the running app. Keep the APK out of `public/`:
+  Vite would bundle it into the web build, which the app then embeds, nesting
+  each APK inside the next. The Android project is a thin WebView shell
+  (`android/`): it serves the bundle over an https origin via WebViewAssetLoader
+  so the YouTube IFrame full-track path works — do not move it back to `file://`.
+  The APK is debug-signed for easy sideloading, not for store distribution.
 - `npm run dev` — starts the local yt-dlp audio proxy *and* Vite together
   (`scripts/dev.mjs`); the app is on `0.0.0.0:12000`. Requires `yt-dlp` on the
   machine for full-length playback; without it the app still runs and falls

@@ -12,8 +12,16 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import { Readable } from 'node:stream'
+import { createReadStream, statSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
 const PORT = Number(process.env.MONO_SERVER_PORT || 8787)
+
+// The APK lives outside public/ so Vite never bundles it into the web build
+// (which would make each APK contain the previous one). It is served here and
+// proxied by Vite at /MONOCHROME.apk.
+const APK_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'downloads', 'MONOCHROME.apk')
 
 /**
  * yt-dlp can be installed several ways, so try the common invocations. The
@@ -168,6 +176,20 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === '/api/resolve') {
     await handleResolve(res, url.searchParams.get('id') || '')
+    return
+  }
+  if (url.pathname === '/MONOCHROME.apk' || url.pathname === '/monochrome.apk') {
+    try {
+      const { size } = statSync(APK_PATH)
+      res.writeHead(200, {
+        'content-type': 'application/vnd.android.package-archive',
+        'content-length': size,
+        'content-disposition': 'attachment; filename="MONOCHROME.apk"',
+      })
+      createReadStream(APK_PATH).pipe(res)
+    } catch {
+      res.writeHead(404, { 'content-type': 'text/plain' }).end('APK not built yet')
+    }
     return
   }
   res.writeHead(404).end('not found')
