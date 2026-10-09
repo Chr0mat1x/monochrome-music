@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Track } from '../types'
 import { useStore } from '../store/useStore'
-import { parseMood, type MoodQuery, buildSearchQuery } from '../lib/moodEngine'
+import { parseMood, type MoodQuery, buildSearchQueries } from '../lib/moodEngine'
 import { searchAll } from '../lib/musicApi'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
@@ -47,11 +47,24 @@ export function Generate() {
     setBusy(true)
     setSaved(false)
     const query = parseMood(text)
-    const searchTerm = buildSearchQuery(query, text)
-    const found = await searchAll(searchTerm, Math.max(limit * 2, 40))
+    // fan out across the mood terms and each detected genre, then merge,
+    // dedupe and rank the whole pool against the requested profile
+    const queries = buildSearchQueries(query, text)
+    const batches = await Promise.all(
+      queries.map((q) => searchAll(q, Math.max(limit, 40)).catch(() => [])),
+    )
+    const seen = new Set<string>()
+    const pool: Track[] = []
+    for (const batch of batches) {
+      for (const t of batch) {
+        const key = `${t.title.toLowerCase()}|${t.artist.toLowerCase()}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        pool.push(t)
+      }
+    }
 
-    // rank by how close each track sits to the requested mood profile
-    const scored = found
+    const scored = pool
       .map((t) => ({ t, score: moodDistance(query, t) }))
       .sort((a, b) => a.score - b.score)
       .slice(0, limit)
@@ -227,7 +240,14 @@ export function Generate() {
 }
 
 function moodDistance(q: MoodQuery, t: Track): number {
-  return Math.abs(q.energy - t.energy) * 1.0 + Math.abs(q.valence - t.valence) * 0.7 + (q.bpm ? Math.abs(q.bpm - t.bpm) * 0.15 : 0)
+  let d =
+    Math.abs(q.energy - t.energy) * 1.0 +
+    Math.abs(q.valence - t.valence) * 0.7 +
+    (q.bpm ? Math.abs(q.bpm - t.bpm) * 0.15 : 0)
+  // nudge the right genres up and instruments-only requests toward no-vocal
+  if (q.genres.length && !q.genres.some((g) => t.genre.toLowerCase().includes(g))) d += 16
+  if (q.instrumental && t.genre.toLowerCase().includes('vocal')) d += 10
+  return d
 }
 
 function MoodMeter({ label, value }: { label: string; value: number }) {

@@ -133,6 +133,19 @@ export function buildSearchQuery(q: MoodQuery, raw: string): string {
   return cleaned || 'music'
 }
 
+/**
+ * Fan out into several targeted queries (mood terms plus each genre) so one
+ * vague phrase still returns a wide, on-theme pool to rank.
+ */
+export function buildSearchQueries(q: MoodQuery, raw: string): string[] {
+  const queries = new Set<string>()
+  const primary = buildSearchQuery(q, raw)
+  if (primary) queries.add(primary)
+  for (const g of q.genres) queries.add(`${g} music`)
+  if (q.instrumental) queries.add(`${q.genres[0] ?? primary} instrumental`)
+  return Array.from(queries).slice(0, 4)
+}
+
 const STOP = new Set([
   'для', 'под', 'без', 'мне', 'очень', 'что-то', 'что', 'как', 'это', 'музыка', 'музыку', 'настроение',
   'хочу', 'нужно', 'можно', 'если', 'чтобы', 'трек', 'треки', 'песня', 'песни', 'плейлист',
