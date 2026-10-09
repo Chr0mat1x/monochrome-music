@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Track } from '../types'
-import { searchAll, audiusTrending, deezerChart, deezerArtistPicture } from '../lib/musicApi'
+import { searchAll, audiusTrending, deezerChart, deezerArtistPicture, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
 import { Cover } from '../components/Cover'
@@ -90,11 +90,23 @@ export function Home() {
       setRows(built)
       register([...chart, ...trend, ...built.flatMap((r) => r.tracks)])
       setLoading(false)
+      // Resolve full versions in the background so pressing play starts the
+      // real song, not a 30-second cut.
+      void prefetchFullTracks([...chart, ...built.flatMap((r) => r.tracks)])
     })()
     return () => {
       cancelled = true
     }
   }, [register])
+
+  // Keep the rows in sync as full versions arrive.
+  useEffect(() => {
+    return subscribeFullTracks((full) => {
+      const swap = (list: Track[]) => list.map((t) => (t.id === full.id ? full : t))
+      setCharts(swap)
+      setRows((cur) => cur.map((r) => ({ ...r, tracks: swap(r.tracks) })))
+    })
+  }, [])
 
   const quickPicks = playlists.slice(0, 6)
   const allTracks = useMemo(() => [...charts, ...trending, ...rows.flatMap((r) => r.tracks)], [charts, trending, rows])

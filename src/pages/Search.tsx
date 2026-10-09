@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { Track } from '../types'
-import { searchAll, getArtist } from '../lib/musicApi'
+import { searchAll, getArtist, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
 import { TrackRow, TrackListHeader, SourceBadge } from '../components/TrackRow'
@@ -41,6 +41,7 @@ export function Search() {
       if (cancelled) return
       setResults(tracks)
       register(tracks)
+      void prefetchFullTracks(tracks)
 
       // derive an artist list from result diversity, then swap in real
       // portrait photos from Deezer where available
@@ -66,6 +67,13 @@ export function Search() {
       window.clearTimeout(timer)
     }
   }, [query, register])
+
+  useEffect(() => {
+    // Fold every resolved full version back into the visible list.
+    return subscribeFullTracks((full) => {
+      setResults((cur) => cur.map((t) => (t.id === full.id ? full : t)))
+    })
+  }, [])
 
   const albums = useMemo(() => {
     const map = new Map<string, { id: string; title: string; artist: string; art: string | null; tracks: Track[] }>()

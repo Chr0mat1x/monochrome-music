@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Playlist, RepeatMode, Track } from '../types'
 import { engine } from '../lib/audioEngine'
-import { findAudiusFull, findSoundCloudFull, inferProfile, resolveFullAudio, upgradeToFullTrack } from '../lib/musicApi'
+import { cachedFullTrack, findAudiusFull, findSoundCloudFull, inferProfile, resolveFullAudio, subscribeFullTracks, upgradeToFullTrack } from '../lib/musicApi'
 
 const LS_KEY = 'monochrome.v2'
 
@@ -137,6 +137,27 @@ export const useStore = create<StoreState>((set, get) => {
    */
   const upgrades = new Map<string, Promise<Track | null>>()
 
+  // When any page resolves a full version (e.g. the mood generator pre-fetches
+  // a whole playlist), fold it into the live queue so an already-playing
+  // preview is upgraded in place, and so `cachedFullTrack` makes the next play
+  // start full immediately.
+  subscribeFullTracks((full) => {
+    const state = get()
+    const queue = state.queue.map((t) =>
+      t.id === full.id || (t.artist === full.artist && t.title === full.title) ? full : t,
+    )
+    const current =
+      state.currentTrack &&
+      (state.currentTrack.id === full.id ||
+        (state.currentTrack.artist === full.artist && state.currentTrack.title === full.title))
+        ? full
+        : state.currentTrack
+    state.register([full])
+    if (current !== state.currentTrack || queue.some((t, i) => t !== state.queue[i])) {
+      set({ currentTrack: current, queue })
+    }
+  })
+
   const startTrack = (track: Track, index?: number) => {
     get().register([track])
     const recent = [track, ...get().recentlyPlayed.filter((t) => t.id !== track.id)].slice(0, 30)
@@ -151,6 +172,18 @@ export const useStore = create<StoreState>((set, get) => {
     if (!track.preview) return
     set({ upgrading: true })
     const key = `${track.artist}|${track.title}`.toLowerCase()
+    // If the full version was already resolved (e.g. the page pre-fetched it),
+    // skip straight to it instead of playing a preview first.
+    const known = cachedFullTrack(track)
+    if (known) {
+      const queue = get().queue.map((t) => (t.id === track.id ? known : t))
+      get().register([known])
+      set({ currentTrack: known, queue })
+      persist(get())
+      void engine.load(known, true, 0)
+      set({ upgrading: false })
+      return
+    }
     let pending = upgrades.get(key)
     if (!pending) {
       pending = upgradeToFullTrack(track)

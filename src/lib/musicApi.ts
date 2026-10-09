@@ -755,6 +755,18 @@ async function findSoundCloudTrack(artist: string, title: string): Promise<Track
     })
     .filter((s): s is { t: Track; score: number } => !!s)
     .sort((a, b) => b.score - a.score)
+
+  // SoundCloud's official label uploads are DRM-protected, so the best title
+  // match is often unplayable. When a server is available, walk the ranked
+  // list and return the first upload that actually resolves.
+  if (await hasAudioServer()) {
+    const deadline = Date.now() + 12000
+    for (const { t } of scored.slice(0, 6)) {
+      if (await resolveFullAudio(t.sourceId, 'sc')) return t
+      if (Date.now() > deadline) break
+    }
+    return null
+  }
   return scored[0]?.t ?? null
 }
 
@@ -793,29 +805,68 @@ export async function searchAll(query: string, limit = 40): Promise<Track[]> {
 }
 
 /**
- * Swap a 30-second preview for the matching full-length YouTube video.
+ * Memoised full-length results, keyed artist|title. Also broadcast to
+ * subscribers so React lists can swap their 30s previews in place without
+ * re-fetching, and so playback can start a known-full track with no wait.
+ */
+const fullTrackCache = new Map<string, Track>()
+const fullTrackListeners = new Set<(t: Track) => void>()
+
+function fullKey(artist: string, title: string) {
+  return `${artist}|${title}`.toLowerCase()
+}
+
+/** A previously resolved full version of this preview, if we have one. */
+export function cachedFullTrack(track: Track): Track | null {
+  return fullTrackCache.get(fullKey(track.artist, track.title)) ?? null
+}
+
+/** Subscribe to full-version resolutions (fires once per track). */
+export function subscribeFullTracks(cb: (t: Track) => void): () => void {
+  fullTrackListeners.add(cb)
+  return () => fullTrackListeners.delete(cb)
+}
+
+function publishFull(track: Track) {
+  fullTrackCache.set(fullKey(track.artist, track.title), track)
+  for (const cb of fullTrackListeners) cb(track)
+}
+
+/**
+ * Swap a 30-second preview for the matching full-length video.
  * Deezer/iTunes give better metadata and artwork, so we keep the original
  * track (and its id) and only replace the playback source. Returns null when
  * there is no video, or the track is not a commercial preview.
  */
 export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
   if (track.source !== 'deezer' && track.source !== 'itunes') return null
-  // SoundCloud first: it streams full-length audio from any IP, which is what
-  // actually works in the hosted app (YouTube refuses datacenter clients).
-  // Keep the Deezer/iTunes metadata (title, artist, album, artwork) and swap
-  // only the playback source, so the player never shows an upload's own title.
-  const sc = await findSoundCloudTrack(track.artist, track.title).catch(() => null)
-  if (sc) {
-    const streamUrl = await resolveFullAudio(sc.sourceId, 'sc').catch(() => null)
-    if (streamUrl) {
-      return {
-        ...track,
-        source: 'soundcloud',
-        sourceId: sc.sourceId,
-        streamUrl,
-        preview: false,
-        previewTrack: track,
-        duration: track.duration || sc.duration,
+  const cached = cachedFullTrack(track)
+  if (cached) return cached
+  const resolved = await resolveFullTrack(track)
+  if (resolved) publishFull(resolved)
+  return resolved
+}
+
+async function resolveFullTrack(track: Track): Promise<Track | null> {
+  const server = await hasAudioServer()
+  // SoundCloud streams full-length audio from any IP, but only the companion
+  // server can extract it. Without a server (the offline APK) skip SoundCloud
+  // entirely and let YouTube's IFrame player — which runs from the phone's own
+  // residential IP — supply the whole song.
+  if (server) {
+    const sc = await findSoundCloudTrack(track.artist, track.title).catch(() => null)
+    if (sc) {
+      const streamUrl = await resolveFullAudio(sc.sourceId, 'sc').catch(() => null)
+      if (streamUrl) {
+        return {
+          ...track,
+          source: 'soundcloud',
+          sourceId: sc.sourceId,
+          streamUrl,
+          preview: false,
+          previewTrack: track,
+          duration: track.duration || sc.duration,
+        }
       }
     }
   }
@@ -823,7 +874,7 @@ export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
   // listener's own machine, or the IFrame player from a residential IP.
   const match = await findYouTubeTrack(track.artist, track.title).catch(() => null)
   if (match) {
-    const streamUrl = await resolveFullAudio(match.sourceId).catch(() => null)
+    const streamUrl = server ? await resolveFullAudio(match.sourceId).catch(() => null) : null
     return {
       ...track,
       source: 'youtube',
@@ -835,6 +886,7 @@ export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
       duration: match.duration || track.duration,
     }
   }
+  if (!server) return null
   // Last resort: an Audius full track (mostly covers for mainstream music).
   const audius = await findAudiusFull(track.artist, track.title).catch(() => null)
   if (audius) {
@@ -850,6 +902,23 @@ export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
     }
   }
   return null
+}
+
+/**
+ * Resolve full versions for a whole list in the background, a few at a time.
+ * Results are published to `fullTrackCache`/listeners, so any subscribed list
+ * swaps its previews in place and the first play starts full immediately.
+ */
+export async function prefetchFullTracks(tracks: Track[], concurrency = 4): Promise<void> {
+  const previews = tracks.filter((t) => t.preview && (t.source === 'deezer' || t.source === 'itunes'))
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < previews.length) {
+      const track = previews[cursor++]
+      await upgradeToFullTrack(track).catch(() => null)
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker))
 }
 
 /* ------------------------------------------------------------------ *
@@ -918,18 +987,50 @@ function titleCase(s: string) {
     .join(' ')
 }
 
+// Parenthetical/bracketed qualifiers ("(Live Aid)", "[Remastered]") and trailing
+// " - Live" tags identify a *version* of a song, not a different song.
+const VERSION_TAG = /\([^)]*\)|\[[^\]]*\]/g
+const LIVE_TAG = /\b(live|remaster|remastered|revisited|mix|edit|demo|instrumental|acoustic|karaoke)\b/i
+
+/** Canonical song name with version qualifiers stripped, for de-duplication. */
+function baseTitle(title: string): string {
+  return cleanName(title.replace(VERSION_TAG, ' '))
+}
+
+/** 0 for the studio original, 1 for any alternate version. */
+function versionRank(title: string): number {
+  return LIVE_TAG.test(title) ? 1 : 0
+}
+
+/**
+ * Collapse a ranked track list to one entry per song, keeping the studio
+ * original over live/remix/remaster editions. Insertion order is preserved so
+ * a ranked list (Deezer /top) stays ranked.
+ */
+function dedupeTracks(list: Track[]): Track[] {
+  const byKey = new Map<string, Track>()
+  for (const t of list) {
+    const key = baseTitle(t.title)
+    const prev = byKey.get(key)
+    if (!prev || versionRank(t.title) < versionRank(prev.title)) byKey.set(key, t)
+  }
+  return Array.from(byKey.values())
+}
+
 export async function getArtist(name: string): Promise<{ artist: Artist; tracks: Track[]; albums: Album[] }> {
   const info = await deezerArtistInfo(name)
   let tracks: Track[] = []
   if (info) {
-    tracks = await deezerTopTracks(info.id, 50)
+    // /top caps out at 100 and is ranked, so ask for the full page; the album
+    // list below supplies the rest of the discography.
+    tracks = await deezerTopTracks(info.id, 100)
   }
   if (!tracks.length) {
     const [it, au] = await Promise.all([searchItunes(name, 25).catch(() => []), searchAudius(name, 25).catch(() => [])])
     tracks = [...it, ...au]
   }
   const own = tracks.filter((t) => t.artist.toLowerCase() === name.toLowerCase())
-  const pool = own.length >= 4 ? own : tracks
+  const pool = dedupeTracks(own.length >= 4 ? own : tracks)
 
   const albumMap = new Map<string, Album>()
   for (const t of pool) {

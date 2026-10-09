@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import type { Track } from '../types'
 import { useStore } from '../store/useStore'
 import { parseMood, type MoodQuery, buildSearchQueries } from '../lib/moodEngine'
-import { searchAll } from '../lib/musicApi'
+import { searchAll, prefetchFullTracks } from '../lib/musicApi'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
 import { IconCheck, IconPlay, IconSparkles } from '../components/Icons'
@@ -78,6 +78,10 @@ export function Generate() {
       tracks: scored,
     })
     setBusy(false)
+
+    // Start resolving full versions for the whole playlist up front, so the
+    // list fills in with real songs while the user reads it.
+    void prefetchFullTracks(scored)
   }
 
   const save = () => {

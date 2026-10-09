@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import type { Album, Artist, Track } from '../types'
-import { getArtist } from '../lib/musicApi'
+import { getArtist, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { Cover } from '../components/Cover'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
@@ -34,11 +34,20 @@ export function ArtistPage() {
       setAlbums(data.albums)
       register(data.tracks)
       setLoading(false)
+      // Pull full versions of the whole discography in the background so the
+      // artist page plays real songs, not 30-second previews.
+      void prefetchFullTracks(data.tracks)
     })()
     return () => {
       cancelled = true
     }
   }, [artistName, register])
+
+  useEffect(() => {
+    return subscribeFullTracks((full) => {
+      setTracks((cur) => cur.map((t) => (t.id === full.id ? full : t)))
+    })
+  }, [])
 
   const filteredAlbums = useMemo(() => {
     if (filter === 'all') return albums
@@ -97,7 +106,7 @@ export function ArtistPage() {
         ) : (
           <>
             <TrackListHeader showAlbum={false} />
-            {tracks.slice(0, 10).map((t, i) => (
+            {tracks.slice(0, 50).map((t, i) => (
               <TrackRow key={t.id} track={t} index={i} context={tracks} showCover showAlbum={false} />
             ))}
           </>
