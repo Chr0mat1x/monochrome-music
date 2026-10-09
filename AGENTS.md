@@ -94,9 +94,17 @@ runs full-screen on a phone from the home screen.
   recently-played, playlists) is stored as a full track snapshot. `reviveTrack`
   backfills profile fields on old saves.
 - `src/lib/moodEngine.ts` — bilingual (RU/EN) keyword → energy/valence/bpm/
-  genre rules. `parseMood` produces a profile, `buildSearchQuery` turns it into
-  a live catalogue query; the Generate page then ranks results with
-  `moodDistance`. Add moods by extending `RULES`.
+  genre rules. `parseMood` produces a profile, `buildSearchQuery`/`buildSearchQueries`
+  turn it into live catalogue queries; the Generate page ranks results with
+  `moodDistance`. Add low-level moods by extending `RULES`.
+- `src/lib/moodPlanner.ts` — the understanding layer the Generate page uses.
+  `planMoodLocal` reads the description as *concepts* across three axes
+  (genre/mood/context), spots references ("как у Massive Attack"), and composes
+  English queries (`<mood adj> <genre>`), a blended profile, a Russian "как я
+  понял" summary and example artists. A free text model (Pollinations, no key)
+  is raced against a short timeout to enrich the plan; the local planner is the
+  source of truth, so it works offline (APK) and when the model is down. Add
+  vocabulary by extending `CONCEPTS`.
 - `src/components/Cover.tsx` — shows real artwork when present, otherwise
   deterministic monochrome generative SVG art from a seed string.
 - `src/lib/format.ts` — duration / total-time / listener-count formatting.

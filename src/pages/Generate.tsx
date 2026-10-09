@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Track } from '../types'
 import { useStore } from '../store/useStore'
-import { parseMood, type MoodQuery, buildSearchQueries } from '../lib/moodEngine'
+import { parseMood, buildSearchQueries, type MoodQuery } from '../lib/moodEngine'
+import { planMood, planMoodLocal, planToQuery } from '../lib/moodPlanner'
 import { searchAll, prefetchFullTracks } from '../lib/musicApi'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
@@ -26,6 +27,7 @@ interface Generated {
   description: string
   query: MoodQuery
   tracks: Track[]
+  understood: string
 }
 
 export function Generate() {
@@ -40,16 +42,21 @@ export function Generate() {
   const createPlaylist = useStore((s) => s.createPlaylist)
   const register = useStore((s) => s.register)
 
-  const preview = text.trim() ? parseMood(text) : null
+  // Live "how I read this" preview: the same understanding used at generation
+  // time, computed locally so it updates as you type with no network round-trip.
+  const previewPlan = text.trim() ? planMoodLocal(text) : null
+  const preview = previewPlan ? planToQuery(previewPlan) : null
 
   const run = async () => {
     if (!text.trim()) return
     setBusy(true)
     setSaved(false)
-    const query = parseMood(text)
-    // fan out across the mood terms and each detected genre, then merge,
-    // dedupe and rank the whole pool against the requested profile
-    const queries = buildSearchQueries(query, text)
+    // Let the model read the description: it decides the search queries and the
+    // musical profile, instead of us only pattern-matching keywords.
+    const plan = await planMood(text).catch(() => null)
+    const query = plan ? planToQuery(plan) : parseMood(text)
+    // model-authored queries first, rule-based terms appended, then fan out
+    const queries = buildSearchQueries(query, text, plan?.queries ?? [])
     const batches = await Promise.all(
       queries.map((q) => searchAll(q, Math.max(limit, 40)).catch(() => [])),
     )
@@ -64,24 +71,28 @@ export function Generate() {
       }
     }
 
-    const scored = pool
-      .map((t) => ({ t, score: moodDistance(query, t) }))
+    const terms = [...(plan?.queries ?? []), ...(plan?.artists ?? []), ...query.genres]
+    // Drop uploads that never make a good playlist pick: hour-long "mixes" and
+    // 15-second clips dominate the YouTube results for mood queries.
+    const usable = pool.filter((t) => t.duration === 0 || (t.duration >= 45 && t.duration <= 1200))
+    const scored = usable
+      .map((t) => ({ t, score: moodDistance(query, t, terms) }))
       .sort((a, b) => a.score - b.score)
-      .slice(0, limit)
-      .map((s) => s.t)
+    const picked = diversify(scored.map((s) => s.t), limit)
 
-    register(scored)
+    register(picked)
     setResult({
-      name: query.title || text.slice(0, 40),
-      description: `Сгенерировано по описанию: «${text.trim()}». Найдено ${scored.length} реальных треков в каталогах Deezer, iTunes и Audius.`,
+      name: plan?.title || query.title || text.slice(0, 40),
+      description: `Сгенерировано по описанию: «${text.trim()}». Найдено ${picked.length} реальных треков в каталогах Deezer, iTunes и Audius.`,
       query,
-      tracks: scored,
+      tracks: picked,
+      understood: plan?.summary ?? '',
     })
     setBusy(false)
 
     // Start resolving full versions for the whole playlist up front, so the
     // list fills in with real songs while the user reads it.
-    void prefetchFullTracks(scored)
+    void prefetchFullTracks(picked)
   }
 
   const save = () => {
@@ -193,6 +204,12 @@ export function Generate() {
             <div className="flex min-w-0 flex-1 flex-col">
               <span className="text-[11px] font-semibold uppercase tracking-widest text-ink-50">Сгенерированный плейлист</span>
               <h2 className="mt-1 text-3xl font-black tracking-tight text-ink-100">{result.name}</h2>
+              {result.understood && (
+                <p className="mt-2 text-sm text-ink-90">
+                  <span className="text-ink-50">Как я понял: </span>
+                  {result.understood}
+                </p>
+              )}
               <p className="mt-2 text-sm leading-relaxed text-ink-60">{result.description}</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <span className="chip">Энергия {result.query.energy}</span>
@@ -243,15 +260,60 @@ export function Generate() {
   )
 }
 
-function moodDistance(q: MoodQuery, t: Track): number {
+/** Words worth matching between a query/artist and a track's text. */
+function keywords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N} ]+/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2)
+}
+
+/**
+ * Lower is better. Blends the numeric mood profile with how much the track
+ * actually reflects what was asked for — genre, the model's query phrases and
+ * its example artists — so a thematically right song beats a numerically close
+ * but unrelated one.
+ */
+function moodDistance(q: MoodQuery, t: Track, terms: string[] = []): number {
   let d =
     Math.abs(q.energy - t.energy) * 1.0 +
     Math.abs(q.valence - t.valence) * 0.7 +
     (q.bpm ? Math.abs(q.bpm - t.bpm) * 0.15 : 0)
-  // nudge the right genres up and instruments-only requests toward no-vocal
-  if (q.genres.length && !q.genres.some((g) => t.genre.toLowerCase().includes(g))) d += 16
-  if (q.instrumental && t.genre.toLowerCase().includes('vocal')) d += 10
+
+  const hay = `${t.title} ${t.artist} ${t.album} ${t.genre}`.toLowerCase()
+
+  if (q.genres.length && !q.genres.some((g) => hay.includes(g))) d += 16
+  if (q.instrumental && /vocal|feat|lyric/i.test(hay)) d += 10
+
+  // reward overlap with the described vibe; the model's own summary words count
+  const wanted = new Set<string>()
+  for (const term of terms) for (const w of keywords(term)) wanted.add(w)
+  if (wanted.size) {
+    let hits = 0
+    for (const w of wanted) if (hay.includes(w)) hits++
+    d -= Math.min(hits * 6, 24)
+  }
   return d
+}
+
+/**
+ * Keep the best-ranked tracks but stop one artist from swallowing the list:
+ * a second track from the same artist costs a growing penalty, so the playlist
+ * stays varied while still preferring strong matches.
+ */
+function diversify(tracks: Track[], limit: number): Track[] {
+  const byArtist = new Map<string, number>()
+  const out: Track[] = []
+  for (const t of tracks) {
+    if (out.length >= limit) break
+    const key = t.artist.toLowerCase()
+    const n = byArtist.get(key) ?? 0
+    if (n >= 2) continue
+    byArtist.set(key, n + 1)
+    out.push(t)
+  }
+  return out
 }
 
 function MoodMeter({ label, value }: { label: string; value: number }) {

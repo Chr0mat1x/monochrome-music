@@ -135,15 +135,20 @@ export function buildSearchQuery(q: MoodQuery, raw: string): string {
 
 /**
  * Fan out into several targeted queries (mood terms plus each genre) so one
- * vague phrase still returns a wide, on-theme pool to rank.
+ * vague phrase still returns a wide, on-theme pool to rank. `extra` carries the
+ * model-authored queries, which are tried first.
  */
-export function buildSearchQueries(q: MoodQuery, raw: string): string[] {
+export function buildSearchQueries(q: MoodQuery, raw: string, extra: string[] = []): string[] {
   const queries = new Set<string>()
+  for (const e of extra) {
+    const s = e.trim()
+    if (s) queries.add(s)
+  }
   const primary = buildSearchQuery(q, raw)
   if (primary) queries.add(primary)
   for (const g of q.genres) queries.add(`${g} music`)
   if (q.instrumental) queries.add(`${q.genres[0] ?? primary} instrumental`)
-  return Array.from(queries).slice(0, 4)
+  return Array.from(queries).slice(0, 6)
 }
 
 const STOP = new Set([
