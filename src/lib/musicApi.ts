@@ -492,33 +492,61 @@ function pipedVideoId(item: PipedItem): string | null {
 }
 
 /** Rewrite a proxied Piped thumbnail to the original YouTube host. */
-function pipedThumb(item: PipedItem): string | null {
-  const id = pipedVideoId(item)
-  if (id) return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
-  const thumb = item.thumbnail
-  if (!thumb) return null
-  try {
-    const host = new URL(thumb).searchParams.get('host')
-    const path = new URL(thumb).pathname.replace(/^\//, '')
-    if (host) return `https://${host}/${path}`
-  } catch {
-    /* keep the original below */
-  }
-  return thumb
-}
-
 function mapYouTube(item: PipedItem): Track | null {
   const id = pipedVideoId(item)
   if (!id || !item.title) return null
-  const artist = item.uploaderName || 'YouTube'
-  const genre = inferGenreFromContext({ title: item.title })
-  const profile = inferProfile(genre, `${item.title}${artist}`)
+  return buildYouTubeTrack(id, item.title, item.uploaderName || 'YouTube', item.duration ?? 0)
+}
+
+interface ServerSearchItem {
+  id?: string
+  title?: string
+  duration?: number
+  channel?: string
+  channelId?: string
+  thumbnail?: string
+}
+
+/** Build a playable SoundCloud track. SoundCloud streams full-length audio
+ *  from any IP (unlike YouTube's datacenter block), so this is the source that
+ *  makes "full songs" actually work in the hosted app. */
+function buildSoundCloudTrack(i: ServerSearchItem): Track {
+  const title = i.title || ''
+  const artist = i.channel || 'SoundCloud'
+  const genre = inferGenreFromContext({ title })
+  const profile = inferProfile(genre, `${title}${artist}`)
+  return {
+    id: `sc-${i.id}`,
+    title,
+    artist,
+    album: `${artist} — SoundCloud`,
+    duration: Math.round(i.duration ?? 0),
+    genre,
+    year: new Date().getFullYear(),
+    mood: profile.moods,
+    energy: profile.energy,
+    valence: profile.valence,
+    bpm: profile.bpm,
+    seed: profile.seed,
+    source: 'soundcloud' as Source,
+    streamUrl: null,
+    artwork: i.thumbnail || null,
+    streamable: true,
+    preview: false,
+    sourceId: i.id!,
+    permalink: null,
+  }
+}
+
+function buildYouTubeTrack(id: string, title: string, artist: string, duration: number): Track {
+  const genre = inferGenreFromContext({ title })
+  const profile = inferProfile(genre, `${title}${artist}`)
   return {
     id: `yt-${id}`,
-    title: item.title,
+    title,
     artist,
     album: `${artist} — YouTube`,
-    duration: item.duration ?? 0,
+    duration,
     genre,
     year: new Date().getFullYear(),
     mood: profile.moods,
@@ -528,15 +556,47 @@ function mapYouTube(item: PipedItem): Track | null {
     seed: profile.seed,
     source: 'youtube' as Source,
     streamUrl: null, // played through the IFrame player, not an audio element
-    artwork: pipedThumb(item),
+    artwork: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+    streamable: true,
     preview: false,
     sourceId: id,
     permalink: `https://www.youtube.com/watch?v=${id}`,
   }
 }
 
+/** Search through the companion server (yt-dlp), which returns playable ids here. */
+async function serverSearch(
+  query: string,
+  limit: number,
+  src: 'yt' | 'sc',
+): Promise<ServerSearchItem[]> {
+  if (!(await hasAudioServer())) return []
+  const data = await jsonFetch<{ items?: ServerSearchItem[] }>(
+    `${AUDIO_SERVER}/search?src=${src}&q=${encodeURIComponent(query)}&limit=${limit}`,
+    20000,
+  )
+  return data?.items ?? []
+}
+
+async function searchYouTubeServer(query: string, limit: number): Promise<Track[]> {
+  const items = await serverSearch(query, limit, 'yt')
+  return items
+    .filter((i) => i.id && i.title)
+    .map((i) => buildYouTubeTrack(i.id!, i.title!, i.channel || 'YouTube', i.duration ?? 0))
+}
+
+export async function searchSoundCloud(query: string, limit = 25): Promise<Track[]> {
+  if (!query.trim()) return []
+  const items = await serverSearch(query, limit, 'sc').catch(() => [])
+  return items.filter((i) => i.id && i.title).map(buildSoundCloudTrack)
+}
+
 export async function searchYouTube(query: string, limit = 25): Promise<Track[]> {
   if (!query.trim()) return []
+  // Prefer yt-dlp (via the server): Piped's ids are frequently region-blocked
+  // for this machine, so Play would silently fail on most of them.
+  const viaServer = await searchYouTubeServer(query, limit).catch(() => [])
+  if (viaServer.length) return viaServer
   for (const host of PIPED_HOSTS) {
     const data = await jsonFetch<{ items?: PipedItem[] }>(
       `${host}/search?q=${encodeURIComponent(query)}&filter=music_songs`,
@@ -555,6 +615,7 @@ const cleanName = (s: string) =>
 function rankYouTube(results: Track[], artist: string, title: string): Track[] {
   const wantTitle = cleanName(title)
   const wantArtist = cleanName(artist)
+  const NOISE = /cover|remix|flip|bootleg|mashup|sped up|slowed|instrumental|karaoke|8d|nightcore/i
   return results
     .map((t) => {
       const ct = cleanName(t.title)
@@ -563,20 +624,18 @@ function rankYouTube(results: Track[], artist: string, title: string): Track[] {
       // ("Queen Bohemian Rhapsody") so the song name is compared cleanly.
       const bare = ct.startsWith(`${wantArtist} `) ? ct.slice(wantArtist.length + 1).trim() : ct
       let score = 0
-      if (bare === wantTitle || ct === wantTitle) score += 4
-      else if (bare.includes(wantTitle) || wantTitle.includes(bare)) score += 2
-      if (ca === wantArtist) score += 3
-      else if (ca.includes(wantArtist) || wantArtist.includes(ca)) score += 1
-      // official uploads name the channel after the artist
-      if (/topic|official|vevo/i.test(t.artist)) score += 1
-      // Uploaders append tags ("… (Bateria) & Chupetas", "lyrics", "HD"), so
-      // every word beyond the song name hints at a re-upload — nudge it down
-      // so the genuine video wins even without an official channel match.
-      const extra = bare.split(' ').length - wantTitle.split(' ').length
-      if (extra > 0) score -= extra
-      if (/cover|remix|flip|bootleg|mashup|sped up|slowed|instrumental|karaoke|8d/i.test(t.title)) {
-        score -= 2
-      }
+      // A genuine upload's title *starts* with the song name; trailers, tags and
+      // "(Official Video Remastered)" all follow it. Starting-with beats merely
+      // containing, which is how karaoke/lyric dumps sneak in.
+      if (bare === wantTitle || ct === wantTitle) score += 5
+      else if (bare.startsWith(wantTitle)) score += 3
+      else if (bare.includes(wantTitle) || wantTitle.includes(bare)) score += 1
+      if (ca === wantArtist) score += 4
+      else if (ca.includes(wantArtist)) score += 2
+      else if (wantArtist.includes(ca)) score += 1
+      // Official / auto-generated artist channels host the real master.
+      if (/topic|official|vevo/i.test(t.artist)) score += 2
+      if (NOISE.test(t.title)) score -= 3
       return { t, score }
     })
     .sort((a, b) => b.score - a.score)
@@ -614,6 +673,7 @@ export async function findYouTubeTrack(artist: string, title: string): Promise<T
  * playback (datacenter IPs, "confirm you're not a bot", region blocks).
  * ------------------------------------------------------------------ */
 const audiusMatchCache = new Map<string, Promise<Track | null>>()
+const scMatchCache = new Map<string, Promise<Track | null>>()
 
 /** Search Audius and keep only titles that really belong to this song. */
 async function findAudiusTrack(artist: string, title: string): Promise<Track | null> {
@@ -659,6 +719,45 @@ export function findAudiusFull(artist: string, title: string): Promise<Track | n
   return task
 }
 
+/** Pick the SoundCloud upload that best matches a commercial track. */
+export function findSoundCloudFull(artist: string, title: string): Promise<Track | null> {
+  const key = `${artist}|${title}`.toLowerCase()
+  const cached = scMatchCache.get(key)
+  if (cached) return cached
+  const task = findSoundCloudTrack(artist, title)
+  scMatchCache.set(key, task)
+  return task
+}
+
+async function findSoundCloudTrack(artist: string, title: string): Promise<Track | null> {
+  const results = await searchSoundCloud(`${artist} ${title}`, 15).catch(() => [])
+  const wantTitle = cleanName(title)
+  const wantArtist = cleanName(artist)
+  // Reject anything that is not the studio song at roughly the album length —
+  // SoundCloud is full of covers, remixes and 30-second label snippets.
+  const scored = results
+    .map((t) => {
+      const ct = cleanName(t.title)
+      const ca = cleanName(t.artist)
+      const bare = ct.startsWith(`${wantArtist} `) ? ct.slice(wantArtist.length + 1).trim() : ct
+      let score = 0
+      if (bare === wantTitle || ct === wantTitle) score += 5
+      else if (bare.includes(wantTitle)) score += 3
+      else return null
+      if (ca === wantArtist || ca.includes(wantArtist) || wantArtist.includes(ca)) score += 3
+      if (t.duration < 65) return null // preview / snippet
+      if (/cover|remix|flip|bootleg|mashup|sped up|slowed|instrumental|karaoke|8d|nightcore/i.test(t.title)) {
+        score -= 3
+      }
+      // Closer to the canonical length wins (a 3–6 min studio cut).
+      score -= Math.min(Math.abs(t.duration - 240) / 60, 5)
+      return { t, score }
+    })
+    .filter((s): s is { t: Track; score: number } => !!s)
+    .sort((a, b) => b.score - a.score)
+  return scored[0]?.t ?? null
+}
+
 
 /* ------------------------------------------------------------------ *
  * Combined search — Deezer first (best coverage + images), then
@@ -701,8 +800,27 @@ export async function searchAll(query: string, limit = 40): Promise<Track[]> {
  */
 export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
   if (track.source !== 'deezer' && track.source !== 'itunes') return null
-  // Prefer a YouTube upload (widest catalogue). With the local yt-dlp server
-  // it streams through the analyser; otherwise the IFrame player handles it.
+  // SoundCloud first: it streams full-length audio from any IP, which is what
+  // actually works in the hosted app (YouTube refuses datacenter clients).
+  // Keep the Deezer/iTunes metadata (title, artist, album, artwork) and swap
+  // only the playback source, so the player never shows an upload's own title.
+  const sc = await findSoundCloudTrack(track.artist, track.title).catch(() => null)
+  if (sc) {
+    const streamUrl = await resolveFullAudio(sc.sourceId, 'sc').catch(() => null)
+    if (streamUrl) {
+      return {
+        ...track,
+        source: 'soundcloud',
+        sourceId: sc.sourceId,
+        streamUrl,
+        preview: false,
+        previewTrack: track,
+        duration: track.duration || sc.duration,
+      }
+    }
+  }
+  // Then a YouTube upload: it streams through the local yt-dlp server on the
+  // listener's own machine, or the IFrame player from a residential IP.
   const match = await findYouTubeTrack(track.artist, track.title).catch(() => null)
   if (match) {
     const streamUrl = await resolveFullAudio(match.sourceId).catch(() => null)
@@ -717,9 +835,7 @@ export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
       duration: match.duration || track.duration,
     }
   }
-  // No video (or it is unavailable): use an Audius full track, which streams
-  // whole songs from any IP. Keep the Deezer/iTunes metadata (title, artist,
-  // album, artwork) so the player never starts showing some re-upload's title.
+  // Last resort: an Audius full track (mostly covers for mainstream music).
   const audius = await findAudiusFull(track.artist, track.title).catch(() => null)
   if (audius) {
     return {
@@ -772,16 +888,23 @@ export function hasAudioServer(): Promise<boolean> {
 
 const resolveCache = new Map<string, Promise<string | null>>()
 
-/** Confirm the server can actually pull a given video before we commit to it. */
-export function resolveFullAudio(videoId: string): Promise<string | null> {
-  const hit = resolveCache.get(videoId)
+/**
+ * Confirm the server can actually pull a given source before we commit to it.
+ * `src` is 'yt' (YouTube video id) or 'sc' (SoundCloud numeric track id).
+ */
+export function resolveFullAudio(sourceId: string, src: 'yt' | 'sc' = 'yt'): Promise<string | null> {
+  const key = `${src}:${sourceId}`
+  const hit = resolveCache.get(key)
   if (hit) return hit
   const task = (async () => {
     if (!(await hasAudioServer())) return null
-    const data = await jsonFetch<{ ok?: boolean }>(`${AUDIO_SERVER}/resolve?id=${videoId}`, 20000)
-    return data?.ok ? `${AUDIO_SERVER}/audio?id=${videoId}` : null
+    const data = await jsonFetch<{ ok?: boolean }>(
+      `${AUDIO_SERVER}/resolve?src=${src}&id=${sourceId}`,
+      20000,
+    )
+    return data?.ok ? `${AUDIO_SERVER}/audio?src=${src}&id=${sourceId}` : null
   })()
-  resolveCache.set(videoId, task)
+  resolveCache.set(key, task)
   return task
 }
 

@@ -180,6 +180,7 @@ export class AudioEngine {
   private async urlFor(track: Track): Promise<string | null> {
     if (track.source === 'audius') return resolveAudiusStream(track.sourceId)
     if (track.source === 'deezer') return resolveDeezerStream(track.sourceId)
+    if (track.source === 'soundcloud') return resolveFullAudio(track.sourceId, 'sc')
     return track.streamUrl
   }
 

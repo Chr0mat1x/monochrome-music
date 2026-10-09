@@ -15,13 +15,22 @@ function fmt(sec: number): string {
 
 /** Contextual source badge — previews vs. full streams. */
 export function SourceBadge({ track }: { track: Track }) {
-  const label = track.source === 'youtube' ? 'YOUTUBE · ПОЛНЫЙ' : track.preview ? 'ПРЕВЬЮ 30С' : 'ПОЛНЫЙ ТРЕК'
+  const label =
+    track.source === 'soundcloud'
+      ? 'SOUNDCLOUD · ПОЛНЫЙ'
+      : track.source === 'youtube'
+        ? 'YOUTUBE · ПОЛНЫЙ'
+        : track.preview
+          ? 'ПРЕВЬЮ 30С'
+          : 'ПОЛНЫЙ ТРЕК'
   const title =
-    track.source === 'youtube'
-      ? 'Полная версия — воспроизведение через официальный плеер YouTube'
-      : track.preview
-        ? 'Официальное 30-секундное превью из коммерческого каталога'
-        : 'Полная версия (Audius, свободная лицензия)'
+    track.source === 'soundcloud'
+      ? 'Полная версия — потоковая передача через сервер MONOCHROME'
+      : track.source === 'youtube'
+        ? 'Полная версия — воспроизведение через официальный плеер YouTube'
+        : track.preview
+          ? 'Официальное 30-секундное превью из коммерческого каталога'
+          : 'Полная версия (Audius, свободная лицензия)'
   return (
     <span
       title={title}

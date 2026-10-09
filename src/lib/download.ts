@@ -1,10 +1,11 @@
 import type { Track } from '../types'
-import { resolveAudiusStream, resolveDeezerStream } from './musicApi'
+import { resolveAudiusStream, resolveDeezerStream, resolveFullAudio } from './musicApi'
 
 /** Resolve the freshest playable URL for a track (same rules as the engine). */
 export async function resolveStreamUrl(track: Track): Promise<string | null> {
   if (track.source === 'audius') return resolveAudiusStream(track.sourceId)
   if (track.source === 'deezer') return resolveDeezerStream(track.sourceId)
+  if (track.source === 'soundcloud') return resolveFullAudio(track.sourceId, 'sc')
   return track.streamUrl
 }
 

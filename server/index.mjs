@@ -73,9 +73,30 @@ async function ytdlp(args) {
 const urlCache = new Map()
 const URL_TTL = 20 * 60 * 1000
 
-/** Resolve (and cache) the direct audio URL for a video id. */
+/**
+ * Some CDNs refuse a plain fetch of the URLs yt-dlp hands out (YouTube ties
+ * them to the extracting session; SoundCloud serves them freely). Confirm the
+ * URL actually plays with a one-byte ranged request before caching, so a
+ * blocked source reports "unavailable" instead of failing silently later.
+ */
+async function requirePlayable(url) {
+  const probe = await fetch(url, { headers: { range: 'bytes=0-1' } }).catch(() => null)
+  if (!probe || !probe.ok || !probe.body) {
+    throw new Error(`stream unavailable (HTTP ${probe ? probe.status : 'network error'})`)
+  }
+  probe.body.cancel().catch(() => {})
+}
+
+function firstUrl(out) {
+  const url = out.split('\n').map((l) => l.trim()).find(Boolean)
+  if (!url) throw new Error('yt-dlp returned no URL')
+  return url
+}
+
+/** Resolve (and cache) the direct audio URL for a YouTube video id. */
 async function directUrl(videoId) {
-  const hit = urlCache.get(videoId)
+  const key = `yt:${videoId}`
+  const hit = urlCache.get(key)
   if (hit && hit.expires > Date.now()) return hit.url
   const out = await ytdlp([
     '--no-warnings',
@@ -85,31 +106,49 @@ async function directUrl(videoId) {
     '--get-url',
     `https://www.youtube.com/watch?v=${videoId}`,
   ])
-  const url = out.split('\n').map((l) => l.trim()).find(Boolean)
-  if (!url) throw new Error('yt-dlp returned no URL')
-  // `--get-url` happily prints a URL even when YouTube will refuse the actual
-  // stream (bot check, datacenter IP, region block). Prove the URL plays with a
-  // one-byte ranged request before caching or handing it to the client, so a
-  // blocked video reports "unavailable" instead of a silent playback failure.
-  const probe = await fetch(url, { headers: { range: 'bytes=0-1' } }).catch(() => null)
-  if (!probe || !probe.ok || !probe.body) {
-    throw new Error(`stream unavailable (HTTP ${probe ? probe.status : 'network error'})`)
-  }
-  probe.body.cancel().catch(() => {})
-  urlCache.set(videoId, { url, expires: Date.now() + URL_TTL })
+  const url = firstUrl(out)
+  await requirePlayable(url)
+  urlCache.set(key, { url, expires: Date.now() + URL_TTL })
+  return url
+}
+
+/**
+ * Resolve (and cache) the direct audio URL for a SoundCloud track id. YouTube
+ * refuses anonymous streams from datacenter IPs, so SoundCloud — which serves
+ * full-length audio anywhere — is what actually keeps playback working here.
+ */
+async function scDirectUrl(trackId) {
+  const key = `sc:${trackId}`
+  const hit = urlCache.get(key)
+  if (hit && hit.expires > Date.now()) return hit.url
+  const out = await ytdlp([
+    '--no-warnings',
+    '--no-playlist',
+    // Prefer the progressive HTTP MP3: a browser <audio> element cannot play
+    // SoundCloud's HLS manifest, and range requests give us seeking for free.
+    '-f',
+    'http_mp3/bestaudio[protocol^=http]/bestaudio/best',
+    '--get-url',
+    `https://api.soundcloud.com/tracks/${trackId}`,
+  ])
+  const url = firstUrl(out)
+  await requirePlayable(url)
+  urlCache.set(key, { url, expires: Date.now() + URL_TTL })
   return url
 }
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
+const SC_ID = /^\d{1,14}$/
 
-async function handleAudio(req, res, videoId) {
-  if (!VIDEO_ID.test(videoId)) {
-    res.writeHead(400).end('bad video id')
+async function handleAudio(req, res, videoId, source) {
+  const resolve = source === 'sc' ? scDirectUrl : directUrl
+  if (source === 'sc' ? !SC_ID.test(videoId) : !VIDEO_ID.test(videoId)) {
+    res.writeHead(400).end('bad id')
     return
   }
   let url
   try {
-    url = await directUrl(videoId)
+    url = await resolve(videoId)
   } catch (e) {
     res.writeHead(502, { 'content-type': 'text/plain' }).end(String(e.message || e))
     return
@@ -119,9 +158,9 @@ async function handleAudio(req, res, videoId) {
   const range = req.headers.range
   let upstream = await fetch(url, { headers: range ? { range } : {} }).catch(() => null)
   if (!upstream || !upstream.ok || !upstream.body) {
-    urlCache.delete(videoId)
+    urlCache.delete(source === 'sc' ? `sc:${videoId}` : `yt:${videoId}`)
     try {
-      url = await directUrl(videoId)
+      url = await resolve(videoId)
       upstream = await fetch(url, { headers: range ? { range } : {} }).catch(() => null)
     } catch {
       upstream = null
@@ -144,17 +183,62 @@ async function handleAudio(req, res, videoId) {
   Readable.fromWeb(upstream.body).pipe(res)
 }
 
-async function handleResolve(res, videoId) {
-  if (!VIDEO_ID.test(videoId)) {
-    res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":"bad video id"}')
+async function handleResolve(res, id, source) {
+  const resolve = source === 'sc' ? scDirectUrl : directUrl
+  if (source === 'sc' ? !SC_ID.test(id) : !VIDEO_ID.test(id)) {
+    res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":"bad id"}')
     return
   }
   try {
-    await directUrl(videoId)
-    console.log(`[monochrome]   ↳ ok ${videoId}`)
+    await resolve(id)
+    console.log(`[monochrome]   ↳ ok ${source === 'sc' ? 'sc:' : ''}${id}`)
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}')
   } catch (e) {
-    console.log(`[monochrome]   ↳ fail ${videoId}: ${String(e.message || e).slice(0, 80)}`)
+    console.log(`[monochrome]   ↳ fail ${source === 'sc' ? 'sc:' : ''}${id}: ${String(e.message || e).slice(0, 80)}`)
+    res
+      .writeHead(502, { 'content-type': 'application/json' })
+      .end(JSON.stringify({ error: String(e.message || e) }))
+  }
+}
+
+/** Search through a yt-dlp provider, returning a normalised item list. */
+async function ytdlpSearch(prefix, query, n) {
+  const out = await ytdlp(['--no-warnings', '--flat-playlist', '-j', `${prefix}${n}:${query}`])
+  return out
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      try {
+        return JSON.parse(l)
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+    .map((d) => ({
+      id: d.id,
+      title: d.title || '',
+      duration: Number(d.duration) || 0,
+      channel: d.channel || d.uploader || '',
+      channelId: d.channel_id || '',
+      thumbnail:
+        d.thumbnail ||
+        (d.thumbnails?.length ? d.thumbnails[d.thumbnails.length - 1].url : ''),
+    }))
+    .filter((i) => i.id)
+}
+
+async function handleSearch(res, query, limit, provider) {
+  const n = Math.min(Math.max(Number(limit) || 10, 1), 25)
+  if (!query.trim()) {
+    res.writeHead(200, { 'content-type': 'application/json' }).end('{"items":[]}')
+    return
+  }
+  try {
+    const items = await ytdlpSearch(provider === 'sc' ? 'scsearch' : 'ytsearch', query, n)
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ items }))
+  } catch (e) {
     res
       .writeHead(502, { 'content-type': 'application/json' })
       .end(JSON.stringify({ error: String(e.message || e) }))
@@ -171,11 +255,20 @@ const server = createServer(async (req, res) => {
     return
   }
   if (url.pathname === '/api/audio') {
-    await handleAudio(req, res, url.searchParams.get('id') || '')
+    await handleAudio(req, res, url.searchParams.get('id') || '', url.searchParams.get('src') || 'yt')
     return
   }
   if (url.pathname === '/api/resolve') {
-    await handleResolve(res, url.searchParams.get('id') || '')
+    await handleResolve(res, url.searchParams.get('id') || '', url.searchParams.get('src') || 'yt')
+    return
+  }
+  if (url.pathname === '/api/search') {
+    await handleSearch(
+      res,
+      url.searchParams.get('q') || '',
+      url.searchParams.get('limit'),
+      url.searchParams.get('src') || 'yt',
+    )
     return
   }
   if (url.pathname === '/MONOCHROME.apk' || url.pathname === '/monochrome.apk') {

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Playlist, RepeatMode, Track } from '../types'
 import { engine } from '../lib/audioEngine'
-import { findAudiusFull, inferProfile, upgradeToFullTrack } from '../lib/musicApi'
+import { findAudiusFull, findSoundCloudFull, inferProfile, resolveFullAudio, upgradeToFullTrack } from '../lib/musicApi'
 
 const LS_KEY = 'monochrome.v2'
 
@@ -437,59 +437,67 @@ engine.setEvents({
     const cur = state.currentTrack
     // A YouTube embed/stream can be refused (bot check, region block, blocked
     // datacenter IP). Before dropping to the 30-second preview, look for a
-    // full-length Audius upload, which streams whole songs from any IP.
-    if (cur && cur.source === 'youtube') {
+    // full-length SoundCloud upload (streams anywhere), then Audius.
+    if (cur && (cur.source === 'youtube' || cur.source === 'soundcloud')) {
       const preview = cur.previewTrack
       const base = preview || cur // keep the original title/artist/artwork
-      void findAudiusFull(cur.artist, cur.title)
-        .then(async (full) => {
-          if (useStore.getState().currentTrack?.id !== cur.id) return
-          if (full) {
-            const swapped: Track = {
-              ...base,
-              source: 'audius',
-              sourceId: full.sourceId,
-              streamUrl: full.streamUrl,
-              permalink: full.permalink,
-              preview: false,
-              previewTrack: preview,
-              duration: base.duration || full.duration,
-            }
-            const queue = state.queue.map((t) => (t.id === cur.id ? swapped : t))
-            useStore.getState().register([swapped])
-            useStore.setState({ currentTrack: swapped, queue, playbackNote: null })
-            void engine.load(swapped, true)
-            return
-          }
-          // Nothing full-length anywhere → fall back to the commercial preview.
-          if (preview) {
-            const queue = state.queue.map((t) => (t.id === cur.id ? preview : t))
-            useStore.setState({
-              currentTrack: preview,
-              queue,
-              playbackNote: 'Полная версия недоступна — играет превью 30 секунд',
-            })
-            void engine.load(preview, true)
-            return
-          }
-          if (useStore.getState().playing) state.next(true)
-          else useStore.setState({ playing: false, loading: false })
-        })
-        .catch(() => {
-          if (preview) {
-            const queue = state.queue.map((t) => (t.id === cur.id ? preview : t))
-            useStore.setState({
-              currentTrack: preview,
-              queue,
-              playbackNote: 'Полная версия недоступна — играет превью 30 секунд',
-            })
-            void engine.load(preview, true)
-          } else if (state.playing) {
-            state.next(true)
-          } else {
-            useStore.setState({ playing: false, loading: false })
-          }
-        })
+      const swapTo = (full: Track, source: Track['source']): boolean => {
+        if (useStore.getState().currentTrack?.id !== cur.id) return false
+        const swapped: Track = {
+          ...base,
+          source,
+          sourceId: full.sourceId,
+          streamUrl: full.streamUrl,
+          permalink: full.permalink,
+          preview: false,
+          previewTrack: preview,
+          duration: base.duration || full.duration,
+        }
+        const queue = state.queue.map((t) => (t.id === cur.id ? swapped : t))
+        useStore.getState().register([swapped])
+        useStore.setState({ currentTrack: swapped, queue, playbackNote: null })
+        void engine.load(swapped, true)
+        return true
+      }
+      void (async () => {
+        // SoundCloud can actually stream full audio from this machine.
+        const sc = await findSoundCloudFull(cur.artist, cur.title).catch(() => null)
+        if (sc) {
+          const url = await resolveFullAudio(sc.sourceId, 'sc').catch(() => null)
+          if (url && swapTo({ ...sc, streamUrl: url }, 'soundcloud')) return
+        }
+        const full = await findAudiusFull(cur.artist, cur.title).catch(() => null)
+        if (full && swapTo(full, 'audius')) return
+        if (useStore.getState().currentTrack?.id !== cur.id) return
+        // Nothing full-length anywhere → fall back to the commercial preview.
+        if (preview) {
+          const queue = state.queue.map((t) => (t.id === cur.id ? preview : t))
+          useStore.setState({
+            currentTrack: preview,
+            queue,
+            playbackNote: 'Полная версия недоступна — играет превью 30 секунд',
+          })
+          void engine.load(preview, true)
+          return
+        }
+        if (useStore.getState().playing) state.next(true)
+        else useStore.setState({ playing: false, loading: false })
+      })().catch(() => {
+        // Total failure: prefer the commercial preview over silence.
+        if (preview) {
+          const queue = state.queue.map((t) => (t.id === cur.id ? preview : t))
+          useStore.setState({
+            currentTrack: preview,
+            queue,
+            playbackNote: 'Полная версия недоступна — играет превью 30 секунд',
+          })
+          void engine.load(preview, true)
+        } else if (state.playing) {
+          state.next(true)
+        } else {
+          useStore.setState({ playing: false, loading: false })
+        }
+      })
       return
     }
     // Move on rather than getting stuck on a broken stream.
