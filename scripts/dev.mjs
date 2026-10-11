@@ -3,7 +3,7 @@
  * full-length playback out of the box. The proxy is optional: if yt-dlp is
  * missing the frontend simply falls back to YouTube's IFrame player.
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -15,6 +15,23 @@ const env = {
   ...process.env,
   PATH: `${userBin}:${process.env.PATH ?? ''}`,
 }
+
+// Full playback and SoundCloud search are both dead without yt-dlp, and the
+// failure is silent (every resolve just logs "yt-dlp not found"). A fresh box
+// therefore looks broken until someone runs pip by hand, so self-heal here.
+function ensureYtDlp() {
+  const probe = spawnSync('python3', ['-m', 'yt_dlp', '--version'], { env, encoding: 'utf8' })
+  if (probe.status === 0) return
+  console.log('[monochrome] yt-dlp missing — installing it (pip install --user yt-dlp)')
+  const install = spawnSync('python3', ['-m', 'pip', 'install', '--user', '--quiet', 'yt-dlp'], {
+    env,
+    stdio: 'inherit',
+  })
+  if (install.status !== 0) {
+    console.warn('[monochrome] could not install yt-dlp; full playback will fall back to previews')
+  }
+}
+ensureYtDlp()
 
 const children = []
 function start(name, cmd, args) {
