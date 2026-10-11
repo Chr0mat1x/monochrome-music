@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Track } from '../types'
-import { searchAll, audiusTrending, deezerChart, deezerArtistPicture, isPlayableTrack, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
+import { searchAll, audiusTrending, deezerChart, deezerArtistPicture, isPlayableTrack, preferOriginals, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
 import { Cover } from '../components/Cover'
@@ -84,7 +84,7 @@ export function Home() {
         ...ROWS.map((r) => searchAll(r.query, 16)),
       ])
       if (cancelled) return
-      const clean = (list: Track[]) => list.filter(isPlayableTrack)
+      const clean = (list: Track[]) => preferOriginals(list.filter(isPlayableTrack))
       const charts = clean(chart).slice(0, 18)
       const trending = clean(trend).slice(0, 18)
       const built = ROWS.map((r, i) => ({ title: r.title, tracks: clean(rest[i] ?? []).slice(0, 6) })).filter((r) => r.tracks.length)

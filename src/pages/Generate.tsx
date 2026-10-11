@@ -4,7 +4,7 @@ import type { Track } from '../types'
 import { useStore } from '../store/useStore'
 import { parseMood, buildSearchQueries, type MoodQuery } from '../lib/moodEngine'
 import { planMood, planMoodLocal, planToQuery } from '../lib/moodPlanner'
-import { searchAll, isPlayableTrack, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
+import { searchAll, isPlayableTrack, preferOriginals, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
 import { IconCheck, IconPlay, IconSparkles } from '../components/Icons'
@@ -86,7 +86,7 @@ export function Generate() {
     const terms = [...(plan?.queries ?? []), ...(plan?.artists ?? []), ...query.genres]
     // Drop uploads that never make a good playlist pick: hour-long "mixes",
     // "Top 100 Hits" compilations and 15-second clips.
-    const usable = pool.filter(isPlayableTrack)
+    const usable = preferOriginals(pool.filter(isPlayableTrack))
     const scored = usable
       .map((t) => ({ t, score: moodDistance(query, t, terms) }))
       .sort((a, b) => a.score - b.score)

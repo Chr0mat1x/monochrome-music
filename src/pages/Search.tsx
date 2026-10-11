@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { Track } from '../types'
-import { searchAll, isPlayableTrack, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
+import { searchAll, isPlayableTrack, preferOriginals, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
 import { TrackRow, TrackListHeader, SourceBadge } from '../components/TrackRow'
@@ -37,7 +37,7 @@ export function Search() {
     let cancelled = false
     setBusy(true)
     const timer = window.setTimeout(async () => {
-      const tracks = (await searchAll(q, 40)).filter(isPlayableTrack)
+      const tracks = preferOriginals((await searchAll(q, 40)).filter(isPlayableTrack))
       if (cancelled) return
       setResults(tracks)
       register(tracks)

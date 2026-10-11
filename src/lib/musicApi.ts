@@ -807,6 +807,26 @@ export function isPlayableTrack(t: Track): boolean {
   return true
 }
 
+/**
+ * Uploads that are not the song the user asked for. Catalogue search is full
+ * of re-uploads — lyric videos, covers, karaoke and sped-up edits — that crowd
+ * out the original when you look for a well-known track.
+ */
+const JUNK_TITLE = /\b(covers?|karaoke|lyric video|lyrics?|instrumental version|8d audio|sped up|slowed(\s*\+?\s*reverb)?|nightcore|ai cover|ai music|tribute|in the style of|made famous by|full album)\b/i
+
+export function isOriginalTrack(t: Track): boolean {
+  return !JUNK_TITLE.test(t.title)
+}
+
+/**
+ * Drop re-uploads, but only when enough real songs remain: a niche query whose
+ * results all look like covers should still return something.
+ */
+export function preferOriginals(tracks: Track[], min = 8): Track[] {
+  const clean = tracks.filter(isOriginalTrack)
+  return clean.length >= min ? clean : tracks
+}
+
 /* ------------------------------------------------------------------ *
  * Combined search — Deezer first (best coverage + images), then
  * interleave iTunes and Audius, deduped by title+artist.
