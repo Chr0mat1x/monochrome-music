@@ -281,3 +281,11 @@ runs full-screen on a phone from the home screen.
   whole songs (Audius streams directly, nothing to resolve) so playback starts
   without waiting on per-track lookups, and DJ sets are filtered out by length.
 
+
+## yt-dlp on a fresh box
+
+`pip install yt-dlp` puts the binary in `~/.local/bin`, which is **not** on PATH in this
+environment. The proxy then logs `yt-dlp not found` and every resolve fails.
+`scripts/dev.mjs` prepends `~/.local/bin` to the child PATH, and the server also
+falls back to `python3 -m yt_dlp`, so `npm run dev` works either way. If nothing
+plays after a rebuild, check `yt-dlp --version` first.
