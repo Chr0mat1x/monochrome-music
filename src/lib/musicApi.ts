@@ -1089,7 +1089,7 @@ async function resolveFullTrack(track: Track): Promise<Track | null> {
  * Results are published to `fullTrackCache`/listeners, so any subscribed list
  * swaps its previews in place and the first play starts full immediately.
  */
-export async function prefetchFullTracks(tracks: Track[], concurrency = 4): Promise<void> {
+export async function prefetchFullTracks(tracks: Track[], concurrency = 2): Promise<void> {
   // Only the first screenful is worth pre-resolving: playback almost always
   // starts at the top of a list, and each extra lookup competes for the same
   // serialised extractor queue. Six covers the visible rows on any screen.
@@ -1196,6 +1196,8 @@ async function resolveViaServer(sourceId: string, src: 'yt' | 'sc', attempts = 4
       if (src === 'yt') ytServerBlocked = true
       return null
     }
+    // A plain failure is ambiguous — the extractor may still be working, so wait
+    // and ask once more. `blocked`/`denied` above are already final answers.
     await new Promise((r) => setTimeout(r, 700))
   }
   return null

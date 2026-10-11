@@ -151,20 +151,32 @@ function scUrlFor(id) {
 }
 
 async function extractScUrl(id) {
-  const out = await scSerial(() =>
-    ytdlp([
-      '--no-warnings',
-      '--ignore-errors',
-      '-f',
-      SC_FORMAT,
-      '--print',
-      '%(url)s\t%(format_id)s',
-      `https://api.soundcloud.com/tracks/${id}`,
-    ]),
-  ).catch((e) => {
-    if (/403|Forbidden/i.test(String(e.message || e))) scBlockedUntil = Date.now() + 60 * 1000
-    return ''
-  })
+  let out = ''
+  try {
+    out = await scSerial(() =>
+      ytdlp([
+        '--no-warnings',
+        '--ignore-errors',
+        '-f',
+        SC_FORMAT,
+        '--print',
+        '%(url)s\t%(format_id)s',
+        `https://api.soundcloud.com/tracks/${id}`,
+      ]),
+    )
+  } catch (e) {
+    const message = String(e.message || e)
+    // A rate limit or 403 says nothing about the upload itself, so back the
+    // queue off and leave the id alone — marking it denied here would poison a
+    // perfectly good track for the rest of the session.
+    if (/403|forbidden|rate limit|temporarily unavailable/i.test(message)) {
+      scBlockedUntil = Date.now() + 60 * 1000
+      return null
+    }
+    // Anything else (DRM, region lock, no progressive format) is permanent.
+    scDenied.add(id)
+    return null
+  }
   const [url, formatId] = out.split('\n').map((l) => l.trim()).find(Boolean)?.split('\t') ?? []
   // Check the format name as well as the selector: if SoundCloud ever stops
   // tagging its 30-second clips with "preview", a selector alone would quietly
@@ -195,7 +207,11 @@ async function scSearchDirect(prefix, query, n, need = 4) {
     // /api/resolve per id, so the page renders in about a second instead of
     // waiting on extraction, and by the time a track is clicked its URL is
     // usually already cached.
-    const targets = listed.slice(0, Math.min(Math.max(need, 1), 6))
+    // Warm only the leading candidates. SoundCloud rate-limits a burst of
+    // extractions, and pre-resolving the whole page both trips that limit and
+    // delays the searches the user is waiting on; one or two keeps the likely
+    // first click instant without provoking a block.
+    const targets = listed.slice(0, Math.min(Math.max(need, 1), 2))
     void Promise.all(targets.map((i) => scUrlFor(i.id))).catch(() => {})
   }
   return listed
@@ -381,6 +397,13 @@ async function handleResolve(res, id, source) {
   // resolution that is guaranteed to fail.
   if (source === 'sc' && scDenied.has(id)) {
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":false,"denied":true}')
+    return
+  }
+  // SoundCloud is rate-limiting us right now. Say so distinctly: otherwise the
+  // client reads a plain failure as "still extracting" and re-asks several
+  // times, and every one of those asks re-enters the extractor queue.
+  if (source === 'sc' && Date.now() < scBlockedUntil) {
+    res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":false,"blocked":true}')
     return
   }
   try {
