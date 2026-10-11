@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Track } from '../types'
 import { useStore } from '../store/useStore'
 import { parseMood, buildSearchQueries, type MoodQuery } from '../lib/moodEngine'
 import { planMood, planMoodLocal, planToQuery } from '../lib/moodPlanner'
-import { searchAll, isPlayableTrack, prefetchFullTracks } from '../lib/musicApi'
+import { searchAll, isPlayableTrack, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
 import { IconCheck, IconPlay, IconSparkles } from '../components/Icons'
@@ -41,6 +41,18 @@ export function Generate() {
   const playContext = useStore((s) => s.playContext)
   const createPlaylist = useStore((s) => s.createPlaylist)
   const register = useStore((s) => s.register)
+
+  // Fold resolved full versions back into the generated list, so the 30s
+  // preview badges turn into full songs as the background prefetch lands.
+  useEffect(() => {
+    return subscribeFullTracks((full) => {
+      setResult((cur) =>
+        cur
+          ? { ...cur, tracks: cur.tracks.map((t) => (t.id === full.id ? full : t)) }
+          : cur,
+      )
+    })
+  }, [])
 
   // Live "how I read this" preview: the same understanding used at generation
   // time, computed locally so it updates as you type with no network round-trip.
