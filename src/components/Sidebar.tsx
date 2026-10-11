@@ -1,7 +1,7 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore'
 import { Cover } from './Cover'
-import { IconHeart, IconHome, IconLibrary, IconPlus, IconSearch, IconSparkles } from './Icons'
+import { IconHeart, IconHome, IconLibrary, IconPlus, IconSearch, IconSparkles, IconWave } from './Icons'
 
 const navItem = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-200 ${
@@ -29,6 +29,9 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           </NavLink>
           <NavLink to="/search" className={navItem} onClick={onClose}>
             <IconSearch width={19} height={19} /> Поиск
+          </NavLink>
+          <NavLink to="/wave" className={navItem} onClick={onClose}>
+            <IconWave width={19} height={19} /> Моя волна
           </NavLink>
           <NavLink to="/generate" className={navItem} onClick={onClose}>
             <IconSparkles width={19} height={19} /> По настроению

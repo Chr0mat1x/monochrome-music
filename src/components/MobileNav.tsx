@@ -1,12 +1,12 @@
 import { NavLink } from 'react-router-dom'
-import { IconHeart, IconHome, IconLibrary, IconSearch, IconSparkles } from './Icons'
+import { IconHome, IconLibrary, IconSearch, IconSparkles, IconWave } from './Icons'
 
 const tabs = [
   { to: '/', end: true, label: 'Главная', Icon: IconHome },
   { to: '/search', label: 'Поиск', Icon: IconSearch },
+  { to: '/wave', label: 'Волна', Icon: IconWave },
   { to: '/generate', label: 'Настроение', Icon: IconSparkles },
   { to: '/library', label: 'Медиатека', Icon: IconLibrary },
-  { to: '/liked', label: 'Избранное', Icon: IconHeart },
 ]
 
 /** Thumb-reachable bottom navigation, shown only on narrow screens. */

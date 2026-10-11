@@ -4,8 +4,9 @@ import type { Track } from '../types'
 import { searchAll, audiusTrending, deezerChart, deezerArtistPicture, isPlayableTrack, preferOriginals, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
+import { Visualizer } from '../components/Visualizer'
 import { Cover } from '../components/Cover'
-import { IconChevron, IconPlay, IconSparkles } from '../components/Icons'
+import { IconChevron, IconPlay, IconSparkles, IconWave } from '../components/Icons'
 
 function greeting() {
   const h = new Date().getHours()
@@ -140,13 +141,21 @@ export function Home() {
     <div className="px-4 pb-10 sm:px-6">
       <div className="flex flex-wrap items-end justify-between gap-3 pt-2">
         <h1 className="text-3xl font-black tracking-tight text-ink-100">{greeting()}</h1>
-        <button
-          className="flex items-center gap-2 rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-0 transition-transform hover:scale-[1.02] disabled:opacity-40"
-          onClick={() => playContext(allTracks, 0)}
-          disabled={!allTracks.length}
-        >
-          <IconPlay width={16} height={16} /> Играть всё
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/wave"
+            className="flex items-center gap-2 rounded-full border border-ink-40 px-4 py-2 text-sm font-semibold text-ink-90 transition-colors hover:border-ink-100"
+          >
+            <IconWave width={16} height={16} /> Моя волна
+          </Link>
+          <button
+            className="flex items-center gap-2 rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-0 transition-transform hover:scale-[1.02] disabled:opacity-40"
+            onClick={() => playContext(allTracks, 0)}
+            disabled={!allTracks.length}
+          >
+            <IconPlay width={16} height={16} /> Играть всё
+          </button>
+        </div>
       </div>
 
       {quickPicks.length > 0 && (
@@ -175,6 +184,28 @@ export function Home() {
           ))}
         </div>
       )}
+
+      <Link
+        to="/wave"
+        className="group relative mt-8 flex flex-col justify-between overflow-hidden rounded-xl border border-ink-25 bg-ink-10 p-6 sm:flex-row sm:items-center"
+      >
+        <div className="pointer-events-none absolute inset-0 opacity-[0.16]">
+          <Visualizer bars={80} mode="wave" className="h-full w-full" />
+        </div>
+        <div className="relative z-10 max-w-xl">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.3em] text-ink-60">
+            <IconWave width={15} height={15} /> персональный поток
+          </div>
+          <h2 className="mt-3 text-2xl font-black tracking-tight text-ink-100 sm:text-3xl">Моя волна</h2>
+          <p className="mt-2 text-sm text-ink-60">
+            Бесконечный поток под ваш вкус. Он учится на лайках и истории, добавляет треки на лету и
+            уходит в нужную сторону по одному описанию настроения.
+          </p>
+          <span className="mt-4 inline-flex items-center gap-2 rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-0">
+            Включить волну <IconChevron width={15} height={15} />
+          </span>
+        </div>
+      </Link>
 
       <Link
         to="/generate"

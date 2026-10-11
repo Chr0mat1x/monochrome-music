@@ -234,4 +234,15 @@ runs full-screen on a phone from the home screen.
   spans); the panes blur that light, which is what reads as glass. Everything
   stays strictly greyscale. `prefers-reduced-transparency` falls back to solid
   panels and hides the ambient layer; `prefers-reduced-motion` stops the drift.
+- **"Моя волна" (src/lib/wave.ts + src/pages/Wave.tsx).** An endless personal
+  stream. There is no account, so taste is inferred from `liked` (weight 2) and
+  `recentlyPlayed` (weight fading with age) — a weighted mean of energy,
+  valence and bpm plus tallied genres/artists. `nextWaveBatch` fans those out
+  into search queries, ranks results by distance from the taste (recently
+  liked artists score a bonus), caps each artist at two tracks and drops
+  anything already queued. `waveMode` in the store makes `next()` treat the
+  queue as endless (never auto-pause at the tail) and call `extendWave()` when
+  fewer than five tracks remain, so the stream never stalls. A typed mood
+  (`waveSeed`) blends into the profile via moodPlanner and outranks the
+  inferred genres.
 

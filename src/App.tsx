@@ -7,6 +7,7 @@ import { MobileNav } from './components/MobileNav'
 import { Home } from './pages/Home'
 import { Search } from './pages/Search'
 import { Generate } from './pages/Generate'
+import { Wave } from './pages/Wave'
 import { Library } from './pages/Library'
 import { AlbumPage } from './pages/AlbumPage'
 import { ArtistPage } from './pages/ArtistPage'
@@ -63,6 +64,7 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/search" element={<Search />} />
               <Route path="/generate" element={<Generate />} />
+              <Route path="/wave" element={<Wave />} />
               <Route path="/library" element={<Library />} />
               <Route path="/album/:id" element={<AlbumPage />} />
               <Route path="/artist/:name" element={<ArtistPage />} />

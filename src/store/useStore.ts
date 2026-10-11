@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import type { Playlist, RepeatMode, Track } from '../types'
 import { engine } from '../lib/audioEngine'
-import { cachedFullTrack, findAudiusFull, findSoundCloudFull, inferProfile, resolveFullAudio, subscribeFullTracks, upgradeToFullTrack } from '../lib/musicApi'
+import { cachedFullTrack, findAudiusFull, findSoundCloudFull, inferProfile, prefetchFullTracks, resolveFullAudio, subscribeFullTracks, upgradeToFullTrack } from '../lib/musicApi'
+import { nextWaveBatch } from '../lib/wave'
 
 const LS_KEY = 'monochrome.v2'
 
@@ -54,6 +55,11 @@ interface StoreState {
   upgrading: boolean
   /** Transient note shown in the player when full-length playback is unavailable. */
   playbackNote: string | null
+  /** "Моя волна": while true the queue is an endless stream and grows on its own. */
+  waveMode: boolean
+  /** The mood text the wave is tuned to, if the listener set one. */
+  waveSeed: string
+  waveLoading: boolean
 
   register: (tracks: Track[]) => void
   playTrack: (track: Track, context?: Track[]) => void
@@ -70,6 +76,14 @@ interface StoreState {
   enqueue: (track: Track) => void
   playNext: (track: Track) => void
   removeFromQueue: (index: number) => void
+
+  startWave: (seed?: string) => Promise<void>
+  stopWave: () => void
+  setWaveSeed: (seed: string) => void
+  /** Fetch and append the next batch; called when the queue runs low. */
+  extendWave: () => Promise<void>
+  /** Pull the current track out of the wave and keep it in the library. */
+  likeCurrentIntoWave: () => void
 
   toggleLike: (track: Track) => void
   isLiked: (id: string) => boolean
@@ -226,6 +240,9 @@ export const useStore = create<StoreState>((set, get) => {
     sleepAt: null,
     upgrading: false,
     playbackNote: null,
+    waveMode: false,
+    waveSeed: '',
+    waveLoading: false,
 
     register: (tracks) => {
       const registry = get().registry
@@ -267,7 +284,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     next: (auto = false) => {
-      const { queue, queueIndex, repeat, shuffle, shuffleOrder } = get()
+      const { queue, queueIndex, repeat, shuffle, shuffleOrder, waveMode } = get()
       if (!queue.length) return
       if (auto && repeat === 'one') {
         const t = queue[queueIndex]
@@ -279,7 +296,7 @@ export const useStore = create<StoreState>((set, get) => {
         const pos = shuffleOrder.indexOf(queueIndex)
         const nextPos = pos + 1
         if (nextPos >= shuffleOrder.length) {
-          if (auto && repeat === 'off') {
+          if (auto && repeat === 'off' && !waveMode) {
             engine.pause()
             return
           }
@@ -290,7 +307,7 @@ export const useStore = create<StoreState>((set, get) => {
       } else {
         nextIndex = queueIndex + 1
         if (nextIndex >= queue.length) {
-          if (auto && repeat === 'off') {
+          if (auto && repeat === 'off' && !waveMode) {
             engine.pause()
             return
           }
@@ -298,6 +315,7 @@ export const useStore = create<StoreState>((set, get) => {
         }
       }
       startTrack(queue[nextIndex], nextIndex)
+      if (waveMode && queue.length - (nextIndex + 1) < 5) void get().extendWave()
     },
 
     prev: () => {
@@ -385,6 +403,54 @@ export const useStore = create<StoreState>((set, get) => {
       if (index < queueIndex) idx -= 1
       else if (index === queueIndex) idx = Math.min(idx, next.length - 1)
       set({ queue: next, queueIndex: idx, shuffleOrder: makeShuffleOrder(next.length) })
+    },
+
+    startWave: async (seed) => {
+      const cleanSeed = (seed ?? get().waveSeed ?? '').trim()
+      set({ waveMode: true, waveSeed: cleanSeed, waveLoading: true })
+      const { liked, recentlyPlayed } = get()
+      const { tracks, taste } = await nextWaveBatch(
+        liked,
+        recentlyPlayed,
+        new Set(),
+        24,
+        cleanSeed,
+      )
+      if (!tracks.length) {
+        set({ waveLoading: false })
+        return
+      }
+      get().register(tracks)
+      set({ waveLoading: false })
+      get().playContext(tracks, 0)
+      void prefetchFullTracks(tracks)
+      // Warm the next batch right away so the stream never stalls.
+      void get().extendWave()
+      return void taste
+    },
+
+    stopWave: () => set({ waveMode: false, waveSeed: '', waveLoading: false }),
+
+    setWaveSeed: (seed) => set({ waveSeed: seed }),
+
+    extendWave: async () => {
+      const { waveMode, waveLoading, queue, liked, recentlyPlayed, waveSeed } = get()
+      if (!waveMode || waveLoading) return
+      set({ waveLoading: true })
+      const exclude = new Set(queue.map((t) => t.id))
+      const { tracks } = await nextWaveBatch(liked, recentlyPlayed, exclude, 20, waveSeed)
+      if (tracks.length) {
+        get().register(tracks)
+        const next = [...get().queue, ...tracks]
+        set({ queue: next, shuffleOrder: makeShuffleOrder(next.length) })
+        void prefetchFullTracks(tracks)
+      }
+      set({ waveLoading: false })
+    },
+
+    likeCurrentIntoWave: () => {
+      const t = get().currentTrack
+      if (t) get().toggleLike(t)
     },
 
     toggleLike: (track) => {
