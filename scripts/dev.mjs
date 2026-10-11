@@ -4,10 +4,21 @@
  * missing the frontend simply falls back to YouTube's IFrame player.
  */
 import { spawn } from 'node:child_process'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+
+// `pip install --user yt-dlp` drops the binary in ~/.local/bin, which is not on
+// PATH in this environment; without it the proxy cannot stream full songs. Add
+// it here so `npm run dev` finds yt-dlp regardless of the caller's PATH.
+const userBin = join(homedir(), '.local', 'bin')
+const env = {
+  ...process.env,
+  PATH: `${userBin}:${process.env.PATH ?? ''}`,
+}
 
 const children = []
 function start(name, cmd, args) {
-  const child = spawn(cmd, args, { stdio: 'inherit', env: process.env })
+  const child = spawn(cmd, args, { stdio: 'inherit', env })
   child.on('exit', (code) => {
     if (code) console.error(`[monochrome] ${name} exited with ${code}`)
   })

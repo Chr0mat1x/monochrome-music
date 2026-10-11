@@ -102,7 +102,6 @@ let scBlockedUntil = 0
 // YouTube extraction for a while instead of paying a failed run per candidate.
 let ytBlockedUntil = 0
 let ytFailStreak = 0
-const YT_BLOCK_RE = /not a bot|Sign in to confirm|not available|unavailable|HTTP Error 4/i
 
 /**
  * Search SoundCloud and resolve the results in a single yt-dlp run.
@@ -223,6 +222,13 @@ async function requirePlayable(url) {
   probe.body.cancel().catch(() => {})
 }
 
+/** Does this failure look like a datacenter refusal rather than a bad id? */
+function isBlockedError(message) {
+  return /stream unavailable|not a bot|Sign in to confirm|not available|unavailable|HTTP Error 4/i.test(
+    String(message || ''),
+  )
+}
+
 function firstUrl(out) {
   const url = out.split('\n').map((l) => l.trim()).find(Boolean)
   if (!url) throw new Error('yt-dlp returned no URL')
@@ -238,9 +244,8 @@ async function directUrl(videoId) {
   // run is refused too. Stop spawning processes for a while instead of paying a
   // failed yt-dlp run per candidate; SoundCloud is the working source anyway.
   if (Date.now() < ytBlockedUntil) throw new Error('youtube temporarily unavailable (bot check)')
-  let out
   try {
-    out = await ytdlp([
+    const out = await ytdlp([
       '--no-warnings',
       '--no-playlist',
       '-f',
@@ -248,18 +253,20 @@ async function directUrl(videoId) {
       '--get-url',
       `https://www.youtube.com/watch?v=${videoId}`,
     ])
+    const url = firstUrl(out)
+    await requirePlayable(url)
+    ytFailStreak = 0
+    urlCache.set(key, { url, expires: Date.now() + URL_TTL })
+    return url
   } catch (e) {
-    if (YT_BLOCK_RE.test(String(e.message || e)) && ++ytFailStreak >= 3) {
+    // A 403 on the stream probe is the same datacenter refusal as the bot check,
+    // so count both and skip YouTube once they pile up.
+    if (isBlockedError(e.message) && ++ytFailStreak >= 3) {
       ytBlockedUntil = Date.now() + 3 * 60 * 1000
       ytFailStreak = 0
     }
     throw e
   }
-  ytFailStreak = 0
-  const url = firstUrl(out)
-  await requirePlayable(url)
-  urlCache.set(key, { url, expires: Date.now() + URL_TTL })
-  return url
 }
 
 /**
