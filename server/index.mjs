@@ -114,36 +114,71 @@ const YT_BLOCK_RE = /not a bot|Sign in to confirm|not available|unavailable|HTTP
  * on their own, and the URLs land in the cache so playback is immediate.
  */
 async function scSearchDirect(prefix, query, n) {
-  if (Date.now() < scBlockedUntil) return []
-  const out = await scSerial(() =>
-    ytdlp([
-      '--no-warnings',
-      '--ignore-errors',
-      '-f',
-      SC_FORMAT,
-      '--print',
-      '%(id)s\t%(title)s\t%(duration)s\t%(uploader)s\t%(url)s',
-      `${prefix}${n}:${query}`,
-    ]),
-  ).catch((e) => {
-    if (/403|Forbidden/i.test(String(e.message || e))) scBlockedUntil = Date.now() + 60 * 1000
-    return ''
-  })
+  // While resolve is rate-limited, still return the flat listing: searching is
+  // a different endpoint and keeps SoundCloud results on the page.
+  if (Date.now() < scBlockedUntil) return scFlatSearch(prefix, query, n)
   const items = []
-  for (const line of out.split('\n')) {
-    const [id, title, duration, channel, url] = line.split('\t')
-    if (!id || !url || !/^\d{1,14}$/.test(id)) continue
-    urlCache.set(`sc:${id}`, { url, expires: Date.now() + URL_TTL })
-    items.push({
-      id,
-      title: title || '',
-      duration: Number(duration) || 0,
-      channel: channel || '',
-      thumbnail: '',
-      streamUrl: url,
-    })
+  try {
+    const out = await scSerial(() =>
+      ytdlp([
+        '--no-warnings',
+        '--ignore-errors',
+        '-f',
+        SC_FORMAT,
+        '--print',
+        '%(id)s\t%(title)s\t%(duration)s\t%(uploader)s\t%(url)s',
+        `${prefix}${n}:${query}`,
+      ]),
+    )
+    for (const line of out.split('\n')) {
+      const [id, title, duration, channel, url] = line.split('\t')
+      if (!id || !url || !SC_ID.test(id)) continue
+      urlCache.set(`sc:${id}`, { url, expires: Date.now() + URL_TTL })
+      items.push({
+        id,
+        title: title || '',
+        duration: Number(duration) || 0,
+        channel: channel || '',
+        thumbnail: '',
+        streamUrl: url,
+      })
+    }
+  } catch (e) {
+    if (!/403|Forbidden/i.test(String(e.message || e))) throw e
+    // The resolve half is rate-limited, but search itself still answers (the
+    // flat listing is a different endpoint). Return the candidates without a
+    // URL: playback then resolves lazily, and a burst is not retried.
+    scBlockedUntil = Date.now() + 60 * 1000
+    console.log('[monochrome]   ↳ sc resolve rate-limited; returning search results only')
+    return scFlatSearch(prefix, query, n)
   }
   return items
+}
+
+/** Flat SoundCloud search (no direct URL): the metadata-only listing. */
+async function scFlatSearch(prefix, query, n) {
+  const out = await scSerial(() =>
+    ytdlp(['--no-warnings', '--ignore-errors', '--flat-playlist', '-j', `${prefix}${n}:${query}`]),
+  ).catch(() => '')
+  return out
+    .split('\n')
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+    .map((i) => ({
+      id: String(i.id ?? ''),
+      title: i.title || '',
+      duration: Number(i.duration) || 0,
+      channel: i.uploader || i.channel || '',
+      thumbnail: i.thumbnail || '',
+      streamUrl: '',
+    }))
+    .filter((i) => SC_ID.test(i.id))
 }
 
 /** Resolve several SoundCloud ids in one yt-dlp run, reusing the cache. */

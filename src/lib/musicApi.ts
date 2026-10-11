@@ -1115,8 +1115,11 @@ async function resolveViaServer(sourceId: string, src: 'yt' | 'sc'): Promise<str
  */
 export async function warmSoundCloudTracks(tracks: Track[]): Promise<Set<string>> {
   if (!tracks.length || hasNativeBridge()) return new Set()
+  // Tracks that already carry a URL (search resolved them) need no warming.
+  const pending = tracks.filter((t) => !t.streamUrl)
+  if (!pending.length) return new Set()
   if (!(await hasAudioServer())) return new Set()
-  const ids = [...new Set(tracks.map((t) => t.sourceId).filter(Boolean))].slice(0, 12)
+  const ids = [...new Set(pending.map((t) => t.sourceId).filter(Boolean))].slice(0, 12)
   if (!ids.length) return new Set()
   const data = await jsonFetch<{ ok?: Record<string, boolean> }>(
     `${AUDIO_SERVER}/sc-resolve?ids=${ids.join(',')}`,
