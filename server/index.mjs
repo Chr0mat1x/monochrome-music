@@ -101,6 +101,24 @@ function scSerial(task) {
   return run
 }
 
+/**
+ * Flat SoundCloud searches get their own queue. They are a single fast request
+ * each and are what every keystroke waits on, while the extraction queue above
+ * holds multi-second yt-dlp runs. Sharing one queue meant a background warm
+ * could park a search behind several extractions, which is exactly the "search
+ * takes forever" symptom. Flat searches do not trip SoundCloud's burst limit,
+ * so running them separately is safe.
+ */
+let scSearchChain = Promise.resolve()
+function scSearchSerial(task) {
+  const run = scSearchChain.then(task, task)
+  scSearchChain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
 // SoundCloud also refuses a burst outright (HTTP 403). Back off for a while
 // instead of retrying every candidate and keeping the block alive.
 let scBlockedUntil = 0
@@ -195,7 +213,7 @@ let ytFailStreak = 0
  * which is what keeps a search snappy even when several results are DRM-locked.
  */
 async function scFlatSearch(prefix, query, n) {
-  const out = await scSerial(() =>
+  const out = await scSearchSerial(() =>
     ytdlp(['--no-warnings', '--ignore-errors', '--flat-playlist', '-j', `${prefix}${n}:${query}`]),
   ).catch(() => '')
   return out
