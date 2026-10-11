@@ -76,7 +76,14 @@ async function ytdlp(args) {
 /** Cache of resolved direct URLs: videoId → { url, expires }. */
 const urlCache = new Map()
 const URL_TTL = 20 * 60 * 1000
-const SC_FORMAT = 'http_mp3/bestaudio[protocol^=http]/bestaudio/best'
+// A progressive HTTP MP3 is the only thing a browser <audio> element can stream
+// here: SoundCloud's other formats are HLS manifests it cannot play. The
+// `format_id!*=preview` guard matters more than it looks — SoundCloud hands out
+// `http_mp3_1_0_preview` entries that are exactly 30 seconds long, and without
+// the guard yt-dlp happily selects one as the "best" MP3, so a full song would
+// play as a 30-second clip and look like a broken preview.
+const SC_FORMAT =
+  'http_mp3[format_id!*=preview]/bestaudio[protocol^=http][format_id!*=preview]'
 
 /**
  * SoundCloud answers a burst of extractor calls with HTTP 403, which would
@@ -98,6 +105,84 @@ function scSerial(task) {
 // instead of retrying every candidate and keeping the block alive.
 let scBlockedUntil = 0
 
+// Uploads that came back DRM-protected or region-locked. SoundCloud refuses
+// these permanently, so remembering them stops every later search from paying a
+// fresh yt-dlp run to rediscover the same refusal. This is what made search feel
+// frozen: a handful of dead candidates, re-probed on every keystroke, each
+// costing a full process before the queue drained.
+const scDenied = new Set()
+
+// One extraction per id at a time. The background warm, the readiness poll and
+// the player all ask for the same track within a second of each other; without
+// this they would queue three identical yt-dlp runs behind each other.
+const scInflight = new Map()
+
+/**
+ * Ask yt-dlp for the direct URL of a single SoundCloud upload.
+ * Returns null when the upload cannot be streamed (DRM, region lock).
+ */
+function scUrlFor(id) {
+  if (scDenied.has(id)) return Promise.resolve(null)
+  const cached = urlCache.get(`sc:${id}`)
+  if (cached && cached.expires > Date.now()) return Promise.resolve(cached.url)
+  const flying = scInflight.get(id)
+  if (flying) return flying
+  const task = extractScUrl(id).finally(() => scInflight.delete(id))
+  scInflight.set(id, task)
+  return task
+}
+
+async function extractScUrl(id) {
+  const out = await scSerial(() =>
+    ytdlp([
+      '--no-warnings',
+      '--ignore-errors',
+      '-f',
+      SC_FORMAT,
+      '--print',
+      '%(url)s\t%(format_id)s',
+      `https://api.soundcloud.com/tracks/${id}`,
+    ]),
+  ).catch((e) => {
+    if (/403|Forbidden/i.test(String(e.message || e))) scBlockedUntil = Date.now() + 60 * 1000
+    return ''
+  })
+  const [url, formatId] = out.split('\n').map((l) => l.trim()).find(Boolean)?.split('\t') ?? []
+  // Check the format name as well as the selector: if SoundCloud ever stops
+  // tagging its 30-second clips with "preview", a selector alone would quietly
+  // start serving them as full songs again.
+  if (!url || /preview/i.test(formatId || '')) {
+    scDenied.add(id)
+    return null
+  }
+  urlCache.set(`sc:${id}`, { url, expires: Date.now() + URL_TTL })
+  return url
+}
+
+/**
+ * Search SoundCloud, then resolve only as many candidates as the caller needs.
+ *
+ * The old version asked yt-dlp for the direct URL of every result in the same
+ * run. That is fine on a good day, but each DRM-protected upload still costs a
+ * separate extraction attempt inside that run, and SoundCloud's 403s make those
+ * attempts slow. The result was a search that took minutes and blocked the
+ * queue that playback depends on. Listing first is a single fast call; the
+ * playable subset is then resolved in small parallel batches, so the page
+ * renders immediately and the first tracks are ready almost as fast.
+ */
+async function scSearchDirect(prefix, query, n, need = 4) {
+  const listed = await scFlatSearch(prefix, query, n)
+  if (listed.length && Date.now() >= scBlockedUntil) {
+    // Resolve in the background and return the listing now. The frontend polls
+    // /api/resolve per id, so the page renders in about a second instead of
+    // waiting on extraction, and by the time a track is clicked its URL is
+    // usually already cached.
+    const targets = listed.slice(0, Math.min(Math.max(need, 1), 6))
+    void Promise.all(targets.map((i) => scUrlFor(i.id))).catch(() => {})
+  }
+  return listed
+}
+
 // YouTube refuses anonymous extraction from datacenter IPs ("Sign in to confirm
 // you're not a bot", "This video is not available"). Once failures pile up, skip
 // YouTube extraction for a while instead of paying a failed run per candidate.
@@ -105,57 +190,10 @@ let ytBlockedUntil = 0
 let ytFailStreak = 0
 
 /**
- * Search SoundCloud and resolve the results in a single yt-dlp run.
- *
- * Searching and then resolving each candidate separately costs one Python
- * process per step, and a fresh process takes ~0.5s before yt-dlp does any
- * work at all. Asking yt-dlp for the direct URL during the search itself means
- * one process yields every playable candidate, DRM-protected uploads drop out
- * on their own, and the URLs land in the cache so playback is immediate.
+ * Flat SoundCloud search (no direct URL): the metadata-only listing.
+ * `--flat-playlist` is the fast path — one request, no per-track extraction —
+ * which is what keeps a search snappy even when several results are DRM-locked.
  */
-async function scSearchDirect(prefix, query, n) {
-  // While resolve is rate-limited, still return the flat listing: searching is
-  // a different endpoint and keeps SoundCloud results on the page.
-  if (Date.now() < scBlockedUntil) return scFlatSearch(prefix, query, n)
-  const items = []
-  try {
-    const out = await scSerial(() =>
-      ytdlp([
-        '--no-warnings',
-        '--ignore-errors',
-        '-f',
-        SC_FORMAT,
-        '--print',
-        '%(id)s\t%(title)s\t%(duration)s\t%(uploader)s\t%(url)s',
-        `${prefix}${n}:${query}`,
-      ]),
-    )
-    for (const line of out.split('\n')) {
-      const [id, title, duration, channel, url] = line.split('\t')
-      if (!id || !url || !SC_ID.test(id)) continue
-      urlCache.set(`sc:${id}`, { url, expires: Date.now() + URL_TTL })
-      items.push({
-        id,
-        title: title || '',
-        duration: Number(duration) || 0,
-        channel: channel || '',
-        thumbnail: '',
-        streamUrl: url,
-      })
-    }
-  } catch (e) {
-    if (!/403|Forbidden/i.test(String(e.message || e))) throw e
-    // The resolve half is rate-limited, but search itself still answers (the
-    // flat listing is a different endpoint). Return the candidates without a
-    // URL: playback then resolves lazily, and a burst is not retried.
-    scBlockedUntil = Date.now() + 60 * 1000
-    console.log('[monochrome]   ↳ sc resolve rate-limited; returning search results only')
-    return scFlatSearch(prefix, query, n)
-  }
-  return items
-}
-
-/** Flat SoundCloud search (no direct URL): the metadata-only listing. */
 async function scFlatSearch(prefix, query, n) {
   const out = await scSerial(() =>
     ytdlp(['--no-warnings', '--ignore-errors', '--flat-playlist', '-j', `${prefix}${n}:${query}`]),
@@ -181,32 +219,14 @@ async function scFlatSearch(prefix, query, n) {
     .filter((i) => SC_ID.test(i.id))
 }
 
-/** Resolve several SoundCloud ids in one yt-dlp run, reusing the cache. */
+/** Resolve several SoundCloud ids, reusing the cache and skipping known-dead ones. */
 async function scResolveMany(ids) {
   const want = ids.filter((id) => {
     const hit = urlCache.get(`sc:${id}`)
-    return SC_ID.test(id) && !(hit && hit.expires > Date.now())
+    return SC_ID.test(id) && !scDenied.has(id) && !(hit && hit.expires > Date.now())
   })
-  if (!want.length) return
-  if (Date.now() < scBlockedUntil) return
-  const out = await scSerial(() =>
-    ytdlp([
-      '--no-warnings',
-      '--ignore-errors',
-      '-f',
-      SC_FORMAT,
-      '--print',
-      '%(id)s\t%(url)s',
-      ...want.map((id) => `https://api.soundcloud.com/tracks/${id}`),
-    ]),
-  ).catch((e) => {
-    if (/403|Forbidden/i.test(String(e.message || e))) scBlockedUntil = Date.now() + 60 * 1000
-    return ''
-  })
-  for (const line of out.split('\n')) {
-    const [id, url] = line.split('\t')
-    if (id && url) urlCache.set(`sc:${id}`, { url, expires: Date.now() + URL_TTL })
-  }
+  if (!want.length || Date.now() < scBlockedUntil) return
+  await Promise.all(want.map((id) => scUrlFor(id)))
 }
 
 /**
@@ -280,24 +300,9 @@ async function scDirectUrl(trackId) {
   const hit = urlCache.get(key)
   if (hit && hit.expires > Date.now()) return hit.url
   if (Date.now() < scBlockedUntil) throw new Error('soundcloud temporarily unavailable (rate limit)')
-  const out = await scSerial(() =>
-    ytdlp([
-      '--no-warnings',
-      '--no-playlist',
-      // Prefer the progressive HTTP MP3: a browser <audio> element cannot play
-      // SoundCloud's HLS manifest, and range requests give us seeking for free.
-      '-f',
-      SC_FORMAT,
-      '--get-url',
-      `https://api.soundcloud.com/tracks/${trackId}`,
-    ]),
-  ).catch((e) => {
-    if (/403|Forbidden/i.test(String(e.message || e))) scBlockedUntil = Date.now() + 60 * 1000
-    throw e
-  })
-  const url = firstUrl(out)
+  const url = await scUrlFor(trackId)
+  if (!url) throw new Error('soundcloud track is not streamable')
   await requirePlayable(url)
-  urlCache.set(key, { url, expires: Date.now() + URL_TTL })
   return url
 }
 
@@ -353,15 +358,29 @@ async function handleResolve(res, id, source) {
     res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":"bad id"}')
     return
   }
+  // A SoundCloud upload that is DRM-protected or region-locked can never play,
+  // so say so outright. The client then stops polling instead of retrying a
+  // resolution that is guaranteed to fail.
+  if (source === 'sc' && scDenied.has(id)) {
+    res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":false,"denied":true}')
+    return
+  }
   try {
     await resolve(id)
     console.log(`[monochrome]   ↳ ok ${source === 'sc' ? 'sc:' : ''}${id}`)
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}')
   } catch (e) {
-    console.log(`[monochrome]   ↳ fail ${source === 'sc' ? 'sc:' : ''}${id}: ${String(e.message || e).slice(0, 80)}`)
+    const message = String(e.message || e)
+    console.log(`[monochrome]   ↳ fail ${source === 'sc' ? 'sc:' : ''}${id}: ${message.slice(0, 80)}`)
+    // YouTube refuses this machine's IP entirely. Report that as a server-wide
+    // condition so the client stops asking and uses the IFrame player instead.
+    if (source === 'yt' && isBlockedError(message)) {
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":false,"blocked":true}')
+      return
+    }
     res
       .writeHead(502, { 'content-type': 'application/json' })
-      .end(JSON.stringify({ error: String(e.message || e) }))
+      .end(JSON.stringify({ error: message }))
   }
 }
 
@@ -564,6 +583,19 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === '/api/sc-resolve') {
     await handleScResolve(res, url.searchParams.get('ids') || '')
+    return
+  }
+  if (url.pathname === '/api/warm') {
+    const ids = (url.searchParams.get('ids') || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => SC_ID.test(s))
+      .slice(0, 12)
+    // Fire and forget: the caller polls /api/resolve for readiness, so the
+    // request returns at once instead of holding a connection open for the
+    // whole extraction. That keeps a list upgrade from stalling the UI.
+    void scResolveMany(ids).catch(() => {})
+    json(res, 202, { accepted: ids.length })
     return
   }
   if (url.pathname === '/api/search') {

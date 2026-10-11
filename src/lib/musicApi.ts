@@ -688,21 +688,11 @@ export async function findYouTubeTrack(artist: string, title: string): Promise<T
   if (!results.length) return null
   const ranked = rankYouTube(results, artist, title)
 
-  // When the local audio server is available, prefer a video it can actually
-  // stream (analyser intact). Official uploads are often region/IP-blocked
-  // while a re-upload plays fine, so walk the ranked list — but time-bounded,
-  // because a blocked IP makes every probe slow.
-  if (await hasAudioServer()) {
-    const deadline = Date.now() + 7000
-    for (const candidate of ranked.slice(0, 6)) {
-      if (await resolveFullAudio(candidate.sourceId)) return candidate
-      if (Date.now() > deadline) break
-    }
-  }
-  // Server absent, or every probe refused: still hand the best match to the
-  // official IFrame player, which can play the full video from the listener's
-  // own (residential) IP even when this machine's requests are blocked.
-  return ranked[0]
+  // Hand the best match to the player. Probing candidates here would mean one
+  // extraction run each — and on a datacenter IP every one of them is refused,
+  // so the probe only ever cost time. The IFrame player decides for itself what
+  // is playable from the listener's own IP, and it can retry far more cheaply.
+  return ranked[0] ?? null
 }
 
 /* ------------------------------------------------------------------ *
@@ -714,6 +704,7 @@ export async function findYouTubeTrack(artist: string, title: string): Promise<T
  * ------------------------------------------------------------------ */
 const audiusMatchCache = new Map<string, Promise<Track | null>>()
 const scMatchCache = new Map<string, Promise<Track | null>>()
+const ytMatchCache = new Map<string, Promise<Track | null>>()
 
 /** Search Audius and keep only titles that really belong to this song. */
 async function findAudiusTrack(artist: string, title: string): Promise<Track | null> {
@@ -761,11 +752,32 @@ export function findAudiusFull(artist: string, title: string): Promise<Track | n
 
 /** Pick the SoundCloud upload that best matches a commercial track. */
 export function findSoundCloudFull(artist: string, title: string): Promise<Track | null> {
-  const key = `${artist}|${title}`.toLowerCase()
-  const cached = scMatchCache.get(key)
-  if (cached) return cached
-  const task = findSoundCloudTrack(artist, title)
-  scMatchCache.set(key, task)
+  return matchOnce(scMatchCache, 'sc', artist, title)
+}
+
+/** Pick the YouTube upload that best matches a commercial track. */
+export function findYouTubeFull(artist: string, title: string): Promise<Track | null> {
+  return matchOnce(ytMatchCache, 'yt', artist, title)
+}
+
+/**
+ * Memoise a match lookup by artist|title. Prefetch asks for the same track
+ * from several lists at once (home rows overlap with search), and without this
+ * every duplicate pays a fresh SoundCloud search on the serialised queue.
+ */
+function matchOnce(
+  cache: Map<string, Promise<Track | null>>,
+  kind: string,
+  artist: string,
+  title: string,
+): Promise<Track | null> {
+  const key = `${kind}:${artist}|${title}`.toLowerCase()
+  const hit = cache.get(key)
+  if (hit) return hit
+  const task = (
+    kind === 'yt' ? findYouTubeTrack(artist, title) : findSoundCloudTrack(artist, title)
+  ).catch(() => null)
+  cache.set(key, task)
   return task
 }
 
@@ -811,12 +823,15 @@ async function findSoundCloudTrack(artist: string, title: string): Promise<Track
   }
   if (await hasAudioServer()) {
     const top = scored.slice(0, 6)
-    // A search hit that already carries a signed URL is playable as-is; only
-    // the rest need a batch resolve.
-    const playable = new Set(top.filter((s) => s.t.streamUrl).map((s) => s.t.sourceId))
-    for (const id of await warmSoundCloudTracks(top.map((s) => s.t))) playable.add(id)
+    // A search hit that already carries a signed URL is playable as-is. The
+    // rest are resolved individually — `warmSoundCloudTracks` only asks the
+    // server to start, it does not report readiness, so its result cannot be
+    // used to decide playability here.
     for (const { t } of top) {
-      if (playable.has(t.sourceId)) return t
+      if (t.streamUrl) return t
+    }
+    for (const { t } of top) {
+      if (await resolveFullAudio(t.sourceId, 'sc').catch(() => null)) return t
     }
     return null
   }
@@ -960,17 +975,62 @@ export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
   return resolved
 }
 
+/**
+ * Swap a 30-second preview for the matching full-length upload.
+ *
+ * Order matters and is deliberate:
+ *  1. SoundCloud, when a resolver is available (companion server or the
+ *     Android bridge). It streams whole songs from any IP, so it is the only
+ *     source that is both full-length and actually playable here.
+ *  2. YouTube. With no resolver the track is handed to the official IFrame
+ *     player, which plays the full video from the listener's own (residential)
+ *     IP — no extraction, no wait, and it cannot fail on a bot check.
+ *
+ * The old order probed YouTube extraction first and only then fell back, so on
+ * a datacenter IP every track paid several failed yt-dlp runs before landing
+ * where it was always going to land. That is what made full versions slow.
+ */
+/**
+ * Resolve to null if `p` has not settled within `ms`. The underlying work is
+ * left running, so a slow lookup still lands in its cache for the next caller
+ * instead of being thrown away.
+ */
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms)
+    p.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(null)
+      },
+    )
+  })
+}
+
 async function resolveFullTrack(track: Track): Promise<Track | null> {
   const server = await hasAudioServer()
-  // SoundCloud streams full-length audio from any IP. The companion server
-  // extracts it on the dev machine; inside the Android shell the native bridge
-  // signs the URL in Java instead. Either way, skip SoundCloud when neither is
-  // present and let YouTube's IFrame player supply the whole song.
-  if (server || hasNativeBridge()) {
-    const sc = await findSoundCloudTrack(track.artist, track.title).catch(() => null)
+  const hasResolver = server || hasNativeBridge()
+
+  if (hasResolver) {
+    // SoundCloud gives a real file the <audio> element can stream, which keeps
+    // the visualiser working, so it is tried first — but on a deadline. It
+    // rarely has mainstream songs, and waiting seconds to find that out is what
+    // made full versions feel slow; YouTube's match is the fast, reliable path.
+    // SoundCloud is always attempted, even once YouTube has refused us: it is
+    // an unrelated service and usually the only thing that can play here.
+    const [sc, ytMatch] = await Promise.all([
+      withDeadline(findSoundCloudFull(track.artist, track.title).catch(() => null), 2000),
+      server && !ytServerBlocked
+        ? findYouTubeFull(track.artist, track.title).catch(() => null)
+        : Promise.resolve(null),
+    ])
     if (sc) {
-      // A search hit already carries a signed stream URL; only fall back to a
-      // per-id resolve when it does not.
+      // `findSoundCloudFull` only returns a hit whose URL the server already
+      // resolved, so there is nothing to wait for here.
       const streamUrl = sc.streamUrl ?? (await resolveFullAudio(sc.sourceId, 'sc').catch(() => null))
       if (streamUrl) {
         return {
@@ -984,40 +1044,41 @@ async function resolveFullTrack(track: Track): Promise<Track | null> {
         }
       }
     }
-  }
-  // Then a YouTube upload: it streams through the local yt-dlp server on the
-  // listener's own machine, or the IFrame player from a residential IP.
-  const match = await findYouTubeTrack(track.artist, track.title).catch(() => null)
-  if (match) {
-    const streamUrl = server ? await resolveFullAudio(match.sourceId).catch(() => null) : null
-    // With the server up but YouTube refusing (datacenter bot check), handing
-    // back a YouTube track would only fail in the player — fall through instead.
-    if (streamUrl || !server) {
+    // Nothing streamable on SoundCloud. Hand the YouTube match to the player
+    // without probing it: the IFrame player decides for itself what plays, and
+    // probing only ever costs a refused extraction on a datacenter IP.
+    if (ytMatch) {
       return {
         ...track,
         source: 'youtube',
-        sourceId: match.sourceId,
-        streamUrl,
+        sourceId: ytMatch.sourceId,
+        streamUrl: null,
         preview: false,
         previewTrack: track,
-        // the music video usually runs longer than the album cut
-        duration: match.duration || track.duration,
+        duration: ytMatch.duration || track.duration,
       }
     }
   }
-  if (!server) return null
-  // Last resort: an Audius full track (mostly covers for mainstream music).
-  const audius = await findAudiusFull(track.artist, track.title).catch(() => null)
-  if (audius) {
+
+  // YouTube refuses this machine's IP, so the IFrame player cannot help here
+  // either — it embeds from the same address. Give up immediately instead of
+  // starting a player that will fail seconds later, which is what made a
+  // missing full version feel like a long hang before the preview appeared.
+  if (server && ytServerBlocked) return null
+
+  // No usable server. Search for the video id — that endpoint answers fine even
+  // when extraction is refused — and let the IFrame player stream it from the
+  // listener's own residential IP.
+  const match = await findYouTubeTrack(track.artist, track.title).catch(() => null)
+  if (match) {
     return {
       ...track,
-      source: 'audius',
-      sourceId: audius.sourceId,
-      streamUrl: audius.streamUrl,
-      permalink: audius.permalink,
+      source: 'youtube',
+      sourceId: match.sourceId,
+      streamUrl: null,
       preview: false,
       previewTrack: track,
-      duration: track.duration || audius.duration,
+      duration: match.duration || track.duration,
     }
   }
   return null
@@ -1029,14 +1090,11 @@ async function resolveFullTrack(track: Track): Promise<Track | null> {
  * swaps its previews in place and the first play starts full immediately.
  */
 export async function prefetchFullTracks(tracks: Track[], concurrency = 4): Promise<void> {
-  // Only the first screenful is worth pre-resolving: playback is almost always
-  // started from the top of a list, and every extra SoundCloud lookup competes
-  // for the same serialised extractor queue.
-  const head = tracks.slice(0, 16)
+  // Only the first screenful is worth pre-resolving: playback almost always
+  // starts at the top of a list, and each extra lookup competes for the same
+  // serialised extractor queue. Six covers the visible rows on any screen.
+  const head = tracks.slice(0, 6)
   const previews = head.filter((t) => t.preview && (t.source === 'deezer' || t.source === 'itunes'))
-  // Warm SoundCloud-backed tracks in one batch up front: the server resolves
-  // the whole batch in a single yt-dlp process, which is much cheaper than a
-  // process per track and makes each of them start instantly.
   void warmSoundCloudTracks(head.filter((t) => t.source === 'soundcloud'))
   let cursor = 0
   const worker = async () => {
@@ -1104,17 +1162,43 @@ export function resolveFullAudio(sourceId: string, src: 'yt' | 'sc' = 'yt'): Pro
   const hit = resolveCache.get(key)
   if (hit) return hit
   const task = resolveViaServer(sourceId, src)
+  // Only successful resolutions are memoised. A miss usually just means the
+  // server's background extraction has not finished yet, so caching it would
+  // make the track permanently unplayable for the rest of the session.
+  task.then((url) => {
+    if (!url) resolveCache.delete(key)
+  })
   resolveCache.set(key, task)
   return task
 }
 
-async function resolveViaServer(sourceId: string, src: 'yt' | 'sc'): Promise<string | null> {
-  if (!(await hasAudioServer())) return null
-  const data = await jsonFetch<{ ok?: boolean }>(
-    `${AUDIO_SERVER}/resolve?src=${src}&id=${sourceId}`,
-    20000,
-  )
-  return data?.ok ? `${AUDIO_SERVER}/audio?src=${src}&id=${sourceId}` : null
+/**
+ * Set once the server reports that YouTube extraction is blocked (datacenter
+ * bot check). From then on every YouTube track goes straight to the IFrame
+ * player, which streams from the listener's own IP, instead of paying a
+ * doomed extraction probe per track.
+ */
+let ytServerBlocked = false
+
+async function resolveViaServer(sourceId: string, src: 'yt' | 'sc', attempts = 4): Promise<string | null> {
+  for (let i = 0; i < attempts; i++) {
+    if (!(await hasAudioServer())) return null
+    const data = await jsonFetch<{ ok?: boolean; denied?: boolean; blocked?: boolean }>(
+      `${AUDIO_SERVER}/resolve?src=${src}&id=${sourceId}`,
+      8000,
+    )
+    if (data?.ok) return `${AUDIO_SERVER}/audio?src=${src}&id=${sourceId}`
+    // `denied` is permanent for this upload and `blocked` is a property of the
+    // whole server, so neither is worth retrying. Anything else means the
+    // extractor is still working — give it a moment and ask again.
+    if (data?.denied) return null
+    if (data?.blocked) {
+      if (src === 'yt') ytServerBlocked = true
+      return null
+    }
+    await new Promise((r) => setTimeout(r, 700))
+  }
+  return null
 }
 
 /**
@@ -1137,39 +1221,28 @@ export async function warmSoundCloudTracks(tracks: Track[]): Promise<Set<string>
  */
 let warmBatch: Set<string> | null = null
 let warmTimer: ReturnType<typeof setTimeout> | null = null
-let warmResolvers: Array<(playable: Set<string>) => void> = []
 
 export function warmSoundCloudIds(ids: string[]): Promise<Set<string>> {
   if (!ids.length || hasNativeBridge()) return Promise.resolve(new Set())
-  return new Promise((resolve) => {
-    warmBatch ??= new Set()
-    ids.forEach((id) => warmBatch!.add(id))
-    warmResolvers.push(resolve)
-    if (warmTimer) clearTimeout(warmTimer)
-    warmTimer = setTimeout(flushWarmBatch, 40)
-  })
+  warmBatch ??= new Set()
+  ids.forEach((id) => warmBatch!.add(id))
+  if (warmTimer) clearTimeout(warmTimer)
+  warmTimer = setTimeout(flushWarmBatch, 40)
+  // Readiness is polled per id, so the caller does not have to wait for the
+  // extraction itself — only for the batch to be handed to the server.
+  return Promise.resolve(new Set())
 }
 
 async function flushWarmBatch() {
   const batch = warmBatch
-  const resolvers = warmResolvers
   warmBatch = null
-  warmResolvers = []
   warmTimer = null
-  if (!batch || !resolvers.length) return
-  const playable = await warmSoundCloudIdsNow([...batch])
-  resolvers.forEach((resolve) => resolve(playable))
-}
-
-async function warmSoundCloudIdsNow(ids: string[]): Promise<Set<string>> {
-  if (!(await hasAudioServer())) return new Set()
-  const capped = [...new Set(ids)].slice(0, 24)
-  if (!capped.length) return new Set()
-  const data = await jsonFetch<{ ok?: Record<string, boolean> }>(
-    `${AUDIO_SERVER}/sc-resolve?ids=${capped.join(',')}`,
-    40000,
-  ).catch(() => null)
-  return new Set(Object.keys(data?.ok ?? {}))
+  if (!batch?.size || !(await hasAudioServer())) return
+  const ids = [...batch].slice(0, 12)
+  // Ask the server to start resolving and return immediately. The old call
+  // waited for the whole batch (up to 40s), which is exactly the stall the
+  // upgrade path was meant to avoid.
+  void fetch(`${AUDIO_SERVER}/warm?ids=${ids.join(',')}`).catch(() => {})
 }
 
 /* ------------------------------------------------------------------ *
