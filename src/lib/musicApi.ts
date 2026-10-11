@@ -811,7 +811,10 @@ async function findSoundCloudTrack(artist: string, title: string): Promise<Track
   }
   if (await hasAudioServer()) {
     const top = scored.slice(0, 6)
-    const playable = await warmSoundCloudTracks(top.map((s) => s.t))
+    // A search hit that already carries a signed URL is playable as-is; only
+    // the rest need a batch resolve.
+    const playable = new Set(top.filter((s) => s.t.streamUrl).map((s) => s.t.sourceId))
+    for (const id of await warmSoundCloudTracks(top.map((s) => s.t))) playable.add(id)
     for (const { t } of top) {
       if (playable.has(t.sourceId)) return t
     }
@@ -966,7 +969,9 @@ async function resolveFullTrack(track: Track): Promise<Track | null> {
   if (server || hasNativeBridge()) {
     const sc = await findSoundCloudTrack(track.artist, track.title).catch(() => null)
     if (sc) {
-      const streamUrl = await resolveFullAudio(sc.sourceId, 'sc').catch(() => null)
+      // A search hit already carries a signed stream URL; only fall back to a
+      // per-id resolve when it does not.
+      const streamUrl = sc.streamUrl ?? (await resolveFullAudio(sc.sourceId, 'sc').catch(() => null))
       if (streamUrl) {
         return {
           ...track,
@@ -985,15 +990,19 @@ async function resolveFullTrack(track: Track): Promise<Track | null> {
   const match = await findYouTubeTrack(track.artist, track.title).catch(() => null)
   if (match) {
     const streamUrl = server ? await resolveFullAudio(match.sourceId).catch(() => null) : null
-    return {
-      ...track,
-      source: 'youtube',
-      sourceId: match.sourceId,
-      streamUrl,
-      preview: false,
-      previewTrack: track,
-      // the music video usually runs longer than the album cut
-      duration: match.duration || track.duration,
+    // With the server up but YouTube refusing (datacenter bot check), handing
+    // back a YouTube track would only fail in the player — fall through instead.
+    if (streamUrl || !server) {
+      return {
+        ...track,
+        source: 'youtube',
+        sourceId: match.sourceId,
+        streamUrl,
+        preview: false,
+        previewTrack: track,
+        // the music video usually runs longer than the album cut
+        duration: match.duration || track.duration,
+      }
     }
   }
   if (!server) return null
@@ -1117,13 +1126,48 @@ export async function warmSoundCloudTracks(tracks: Track[]): Promise<Set<string>
   if (!tracks.length || hasNativeBridge()) return new Set()
   // Tracks that already carry a URL (search resolved them) need no warming.
   const pending = tracks.filter((t) => !t.streamUrl)
-  if (!pending.length) return new Set()
+  return warmSoundCloudIds(pending.map((t) => t.sourceId).filter(Boolean))
+}
+
+/**
+ * Warm a batch of SoundCloud ids, coalescing calls that land close together.
+ * A search page upgrades a whole screenful of previews at once; without this
+ * each upgrade would queue its own serialised yt-dlp run on the server and the
+ * later ones would never finish.
+ */
+let warmBatch: Set<string> | null = null
+let warmTimer: ReturnType<typeof setTimeout> | null = null
+let warmResolvers: Array<(playable: Set<string>) => void> = []
+
+export function warmSoundCloudIds(ids: string[]): Promise<Set<string>> {
+  if (!ids.length || hasNativeBridge()) return Promise.resolve(new Set())
+  return new Promise((resolve) => {
+    warmBatch ??= new Set()
+    ids.forEach((id) => warmBatch!.add(id))
+    warmResolvers.push(resolve)
+    if (warmTimer) clearTimeout(warmTimer)
+    warmTimer = setTimeout(flushWarmBatch, 40)
+  })
+}
+
+async function flushWarmBatch() {
+  const batch = warmBatch
+  const resolvers = warmResolvers
+  warmBatch = null
+  warmResolvers = []
+  warmTimer = null
+  if (!batch || !resolvers.length) return
+  const playable = await warmSoundCloudIdsNow([...batch])
+  resolvers.forEach((resolve) => resolve(playable))
+}
+
+async function warmSoundCloudIdsNow(ids: string[]): Promise<Set<string>> {
   if (!(await hasAudioServer())) return new Set()
-  const ids = [...new Set(pending.map((t) => t.sourceId).filter(Boolean))].slice(0, 12)
-  if (!ids.length) return new Set()
+  const capped = [...new Set(ids)].slice(0, 24)
+  if (!capped.length) return new Set()
   const data = await jsonFetch<{ ok?: Record<string, boolean> }>(
-    `${AUDIO_SERVER}/sc-resolve?ids=${ids.join(',')}`,
-    30000,
+    `${AUDIO_SERVER}/sc-resolve?ids=${capped.join(',')}`,
+    40000,
   ).catch(() => null)
   return new Set(Object.keys(data?.ok ?? {}))
 }
