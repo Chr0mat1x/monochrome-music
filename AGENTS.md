@@ -300,3 +300,18 @@ to someone else's account. That is what makes the link permanent: it rebuilds
 the same Track on any device, signed in or not. Keep new fields optional and
 tolerate unknown ones, so links created by an older build keep opening.
 `/playlist/<payload>` redirects to `/s/<payload>` for backwards compatibility.
+
+## Playback pitfalls
+
+* **The service worker must never cache dev modules.** `public/sw.js` used to
+  cache every same-origin GET, including Vite's `/src/…` modules. A worker left
+  over from an earlier build then served stale JavaScript: the page rendered but
+  playback broke silently. It now caches only hashed build output (`/assets/`,
+  icons, manifest). `index.html` also unregisters any stale worker and clears
+  its caches once in dev, so an already-affected browser self-heals on reload.
+* **A server-side YouTube block is not a browser-side block.** The companion
+  server's datacenter IP is refused by YouTube, but the IFrame player embeds
+  YouTube in the listener's own browser and streams from *their* IP. Never let
+  `ytServerBlocked` stop a track from reaching the IFrame player — doing so
+  turns every mainstream track into a 30-second preview.
+
