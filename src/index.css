@@ -73,7 +73,7 @@ body {
    * Only greys are used, keeping the design strictly black-and-white. */
   .glass {
     position: relative;
-    background: rgba(18, 18, 18, 0.55);
+    background: rgba(8, 8, 8, 0.74);
     border: 1px solid rgba(255, 255, 255, 0.08);
     -webkit-backdrop-filter: blur(30px) saturate(1.4);
     backdrop-filter: blur(30px) saturate(1.4);
@@ -83,7 +83,7 @@ body {
   }
   .glass-strong {
     position: relative;
-    background: rgba(10, 10, 10, 0.72);
+    background: rgba(6, 6, 6, 0.86);
     border: 1px solid rgba(255, 255, 255, 0.1);
     -webkit-backdrop-filter: blur(44px) saturate(1.5);
     backdrop-filter: blur(44px) saturate(1.5);
@@ -93,7 +93,7 @@ body {
   }
   .glass-menu {
     position: relative;
-    background: rgba(14, 14, 14, 0.78);
+    background: rgba(8, 8, 8, 0.88);
     border: 1px solid rgba(255, 255, 255, 0.11);
     -webkit-backdrop-filter: blur(28px) saturate(1.4);
     backdrop-filter: blur(28px) saturate(1.4);
@@ -112,8 +112,8 @@ body {
     pointer-events: none;
     background: linear-gradient(
       180deg,
-      rgba(255, 255, 255, 0.1),
-      rgba(255, 255, 255, 0.02) 34%,
+      rgba(255, 255, 255, 0.045),
+      rgba(255, 255, 255, 0.012) 40%,
       rgba(255, 255, 255, 0) 62%
     );
   }
@@ -127,7 +127,7 @@ body {
     transition: background 300ms ease, backdrop-filter 300ms ease, border-color 300ms ease;
   }
   .glass-bar-scrolled {
-    background: rgba(10, 10, 10, 0.6);
+    background: rgba(6, 6, 6, 0.78);
     -webkit-backdrop-filter: blur(36px) saturate(1.4);
     backdrop-filter: blur(36px) saturate(1.4);
     border-bottom-color: rgba(255, 255, 255, 0.08);
@@ -279,7 +279,7 @@ a {
   height: 46vw;
   top: -12vw;
   left: -8vw;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 70%);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 70%);
   animation: ambient-a 26s ease-in-out infinite;
 }
 .mono-ambient span:nth-child(2) {
@@ -287,7 +287,7 @@ a {
   height: 40vw;
   bottom: -14vw;
   right: -6vw;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 70%);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 70%);
   animation: ambient-b 32s ease-in-out infinite;
 }
 .mono-ambient span:nth-child(3) {
@@ -295,7 +295,7 @@ a {
   height: 30vw;
   top: 40%;
   left: 55%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 70%);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 70%);
   animation: ambient-c 38s ease-in-out infinite;
 }
 @keyframes ambient-a {
