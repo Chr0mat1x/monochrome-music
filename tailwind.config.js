@@ -1,25 +1,32 @@
 /** @type {import('tailwindcss').Config} */
+// The palette is driven by CSS variables (see index.css) so the whole app can
+// flip between the dark and light theme by switching one attribute on <html>.
+// "ink" is therefore semantic, not literal: ink-0 is the page surface, ink-100
+// is the foreground, whatever the theme calls those.
+const ink = (v) => `rgb(var(--ink-${v}) / <alpha-value>)`
+
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
         ink: {
-          0: '#000000',
-          5: '#0a0a0a',
-          10: '#111111',
-          15: '#161616',
-          20: '#1c1c1c',
-          25: '#242424',
-          30: '#2e2e2e',
-          40: '#3d3d3d',
-          50: '#555555',
-          60: '#7a7a7a',
-          70: '#9e9e9e',
-          80: '#c4c4c4',
-          90: '#e4e4e4',
-          95: '#f2f2f2',
-          100: '#ffffff',
+          0: ink(0),
+          5: ink(5),
+          10: ink(10),
+          15: ink(15),
+          20: ink(20),
+          25: ink(25),
+          30: ink(30),
+          40: ink(40),
+          50: ink(50),
+          55: ink(55),
+          60: ink(60),
+          70: ink(70),
+          80: ink(80),
+          90: ink(90),
+          95: ink(95),
+          100: ink(100),
         },
       },
       fontFamily: {

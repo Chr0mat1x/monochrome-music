@@ -4,8 +4,12 @@ import { engine } from '../lib/audioEngine'
 import { cachedFullTrack, findAudiusFull, findSoundCloudFull, inferProfile, prefetchFullTracks, resolveFullAudio, subscribeFullTracks, upgradeToFullTrack } from '../lib/musicApi'
 import { nextWaveBatch } from '../lib/wave'
 import type { Taste } from '../lib/wave'
+import * as auth from '../lib/authApi'
+import type { Account } from '../lib/authApi'
 
-const LS_KEY = 'monochrome.v2'
+const PREFS_KEY = 'monochrome.v2'
+/** Library data is scoped per account so each listener keeps their own. */
+const libKey = (userId: string | null) => `monochrome.lib.${userId ?? 'guest'}`
 
 /* ------------------------------------------------------------------ *
  * Remote tracks arrive from live APIs, so the store keeps a runtime
@@ -22,21 +26,38 @@ interface Persisted {
   shuffle: boolean
 }
 
-function loadPersisted(): Partial<Persisted> {
+interface Prefs {
+  volume: number
+  repeat: RepeatMode
+  shuffle: boolean
+}
+
+function readJson<T>(key: string): Partial<T> {
   try {
-    const raw = localStorage.getItem(LS_KEY)
-    if (!raw) return {}
-    return JSON.parse(raw) as Partial<Persisted>
+    const raw = localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as Partial<T>) : {}
   } catch {
     return {}
   }
 }
 
-const persisted = loadPersisted()
+const prefs = readJson<Prefs>(PREFS_KEY)
 
 interface StoreState {
   /** runtime cache of every track seen from the APIs */
   registry: Map<string, Track>
+
+  /** signed-in listener, or null for a local guest session */
+  user: Account | null
+  authReady: boolean
+  /** true while a sign-in / sign-up request is in flight */
+  authBusy: boolean
+  authError: string | null
+  signIn: (email: string, password: string) => Promise<void>
+  signUp: (email: string, password: string, name: string) => Promise<void>
+  signOut: () => Promise<void>
+  /** Restore a signed-in session from the stored token on app start. */
+  restoreSession: () => Promise<void>
   liked: Track[]
   recentlyPlayed: Track[]
   playlists: Playlist[]
@@ -102,6 +123,25 @@ interface StoreState {
   removeFromPlaylist: (playlistId: string, trackId: string) => void
 }
 
+/** Save the playable preferences (volume/repeat/shuffle) — these are not per-account. */
+function persistPrefs(state: StoreState) {
+  const data: Prefs = {
+    volume: state.volume,
+    repeat: state.repeat,
+    shuffle: state.shuffle,
+  }
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(data))
+  } catch {
+    /* storage full or unavailable */
+  }
+}
+
+/**
+ * Save the listener's library. When signed in it goes to their account so a
+ * second device sees the same playlists; locally it is mirrored to a key
+ * scoped by user id, so signing out and back in never mixes libraries.
+ */
 function persist(state: StoreState) {
   const data: Persisted = {
     liked: state.liked,
@@ -111,10 +151,31 @@ function persist(state: StoreState) {
     repeat: state.repeat,
     shuffle: state.shuffle,
   }
+  persistPrefs(state)
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(data))
+    localStorage.setItem(libKey(state.user?.id ?? null), JSON.stringify(data))
   } catch {
     /* storage full or unavailable */
+  }
+  if (state.user) {
+    void auth.saveLibrary({
+      liked: state.liked,
+      playlists: state.playlists,
+      recentlyPlayed: state.recentlyPlayed,
+    })
+  }
+}
+
+/** Load the library for a given account (or the guest bucket). */
+function readLibrary(userId: string | null): Persisted {
+  const data = readJson<Persisted>(libKey(userId))
+  return {
+    liked: data.liked ?? [],
+    recentlyPlayed: data.recentlyPlayed ?? [],
+    playlists: data.playlists ?? [],
+    volume: data.volume ?? 0.85,
+    repeat: data.repeat ?? 'off',
+    shuffle: data.shuffle ?? false,
   }
 }
 
@@ -137,19 +198,70 @@ function reviveTrack(t: any): Track {
 
 let sleepAtTimer: number | null = null
 
-export const useStore = create<StoreState>((set, get) => {
-  const bootVolume = persisted.volume ?? 0.85
-
-  const bootRegistry = new Map<string, Track>()
-  const bootLiked = (persisted.liked ?? []).map(reviveTrack)
-  const bootRecent = (persisted.recentlyPlayed ?? []).map(reviveTrack)
-  const bootPlaylists = (persisted.playlists ?? []).map((p) => ({
+/** Rehydrate a whole library snapshot (tracks revived through profile inference). */
+function reviveLibrary(lib: Persisted) {
+  const liked = (lib.liked ?? []).map(reviveTrack)
+  const recentlyPlayed = (lib.recentlyPlayed ?? []).map(reviveTrack)
+  const playlists = (lib.playlists ?? []).map((p) => ({
     ...p,
     tracks: (p.tracks ?? []).map(reviveTrack),
   }))
-  ;[...bootLiked, ...bootRecent, ...bootPlaylists.flatMap((p) => p.tracks)].forEach((t) => {
-    if (t && t.id) bootRegistry.set(t.id, t)
+  const registry = new Map<string, Track>()
+  ;[...liked, ...recentlyPlayed, ...playlists.flatMap((p) => p.tracks)].forEach((t) => {
+    if (t && t.id) registry.set(t.id, t)
   })
+  return { liked, recentlyPlayed, playlists, registry }
+}
+
+type SetState = (partial: Partial<StoreState>) => void
+type GetState = () => StoreState
+
+/**
+ * Switch the app to an account. The server copy wins when it already has data
+ * (so a second device sees the same playlists); otherwise whatever is on this
+ * device seeds the account, so nothing the guest built is lost on sign-up.
+ */
+async function adoptAccount(user: Account, set: SetState, get: GetState) {
+  const remote = await auth.fetchLibrary()
+  const remoteHasData = !!remote && ((remote.liked?.length ?? 0) > 0 || (remote.playlists?.length ?? 0) > 0)
+  const lib: Persisted = remoteHasData
+    ? {
+        liked: (remote!.liked as Track[]) ?? [],
+        recentlyPlayed: (remote!.recentlyPlayed as Track[]) ?? [],
+        playlists: (remote!.playlists as Playlist[]) ?? [],
+        volume: get().volume,
+        repeat: get().repeat,
+        shuffle: get().shuffle,
+      }
+    : { ...readLibrary(null), volume: get().volume, repeat: get().repeat, shuffle: get().shuffle }
+
+  const revived = reviveLibrary(lib)
+  set({
+    user,
+    authReady: true,
+    authBusy: false,
+    authError: null,
+    liked: revived.liked,
+    recentlyPlayed: revived.recentlyPlayed,
+    playlists: revived.playlists,
+    registry: revived.registry,
+  })
+  void auth.saveLibrary({
+    liked: revived.liked,
+    playlists: revived.playlists,
+    recentlyPlayed: revived.recentlyPlayed,
+  })
+}
+
+export const useStore = create<StoreState>((set, get) => {
+  const bootLib = readLibrary(null)
+  const bootVolume = prefs.volume ?? bootLib.volume ?? 0.85
+
+  const boot = reviveLibrary(bootLib)
+  const bootRegistry = boot.registry
+  const bootLiked = boot.liked
+  const bootRecent = boot.recentlyPlayed
+  const bootPlaylists = boot.playlists
 
   /**
    * In-flight full-version upgrades, so repeated plays of the same preview
@@ -232,6 +344,10 @@ export const useStore = create<StoreState>((set, get) => {
 
   return {
     registry: bootRegistry,
+    user: null,
+    authReady: false,
+    authBusy: false,
+    authError: null,
     liked: bootLiked,
     recentlyPlayed: bootRecent,
     playlists: bootPlaylists,
@@ -242,8 +358,8 @@ export const useStore = create<StoreState>((set, get) => {
     playing: false,
     loading: false,
     volume: bootVolume,
-    repeat: persisted.repeat ?? 'off',
-    shuffle: persisted.shuffle ?? false,
+    repeat: prefs.repeat ?? 'off',
+    shuffle: prefs.shuffle ?? false,
     shuffleOrder: [],
     sleepAt: null,
     upgrading: false,
@@ -262,6 +378,49 @@ export const useStore = create<StoreState>((set, get) => {
         }
       }
       if (changed) set({ registry })
+    },
+
+    signIn: async (email, password) => {
+      set({ authBusy: true, authError: null })
+      try {
+        const { user } = await auth.login(email, password)
+        await adoptAccount(user, set, get)
+      } catch (e) {
+        set({ authBusy: false, authError: e instanceof Error ? e.message : 'Не удалось войти' })
+      }
+    },
+
+    signUp: async (email, password, name) => {
+      set({ authBusy: true, authError: null })
+      try {
+        const { user } = await auth.register(email, password, name)
+        await adoptAccount(user, set, get)
+      } catch (e) {
+        set({ authBusy: false, authError: e instanceof Error ? e.message : 'Не удалось создать аккаунт' })
+      }
+    },
+
+    signOut: async () => {
+      const guest = readLibrary(null)
+      await auth.logout()
+      const revived = reviveLibrary(guest)
+      set({
+        user: null,
+        authError: null,
+        liked: revived.liked,
+        recentlyPlayed: revived.recentlyPlayed,
+        playlists: revived.playlists,
+        registry: revived.registry,
+      })
+    },
+
+    restoreSession: async () => {
+      const user = await auth.currentUser()
+      if (!user) {
+        set({ authReady: true })
+        return
+      }
+      await adoptAccount(user, set, get)
     },
 
     playTrack: (track, context) => {

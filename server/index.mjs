@@ -15,6 +15,7 @@ import { Readable } from 'node:stream'
 import { createReadStream, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { getLibrary, login, logout, publicUser, register, setLibrary, userForToken } from './auth.mjs'
 
 const PORT = Number(process.env.MONO_SERVER_PORT || 8787)
 
@@ -449,6 +450,40 @@ async function handleScResolve(res, idsParam) {
   res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok }))
 }
 
+function json(res, status, body) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify(body))
+}
+
+/** Read a small JSON request body (capped, so a huge upload can't exhaust RAM). */
+function readJson(req, limit = 1_000_000) {
+  return new Promise((resolve) => {
+    let size = 0
+    const chunks = []
+    req.on('data', (c) => {
+      size += c.length
+      if (size > limit) {
+        req.destroy()
+        resolve(null)
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'))
+      } catch {
+        resolve(null)
+      }
+    })
+    req.on('error', () => resolve(null))
+  })
+}
+
+function bearer(req) {
+  const header = req.headers.authorization || ''
+  return header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`)
   if (url.pathname !== '/api/health') {
@@ -458,6 +493,67 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}')
     return
   }
+
+  // ---- accounts ----
+  if (url.pathname.startsWith('/api/auth/')) {
+    const action = url.pathname.slice('/api/auth/'.length)
+    if (req.method !== 'POST') {
+      json(res, 405, { error: 'method not allowed' })
+      return
+    }
+    const body = (await readJson(req)) || {}
+
+    if (action === 'register') {
+      const out = register(body)
+      json(res, out.error ? 400 : 200, out)
+      return
+    }
+    if (action === 'login') {
+      const out = login(body)
+      json(res, out.error ? 401 : 200, out)
+      return
+    }
+    if (action === 'logout') {
+      json(res, 200, logout(bearer(req)))
+      return
+    }
+    json(res, 404, { error: 'unknown auth action' })
+    return
+  }
+
+  if (url.pathname === '/api/me') {
+    const user = userForToken(bearer(req))
+    if (!user) {
+      json(res, 401, { error: 'unauthorized' })
+      return
+    }
+    json(res, 200, { user: publicUser(user) })
+    return
+  }
+
+  if (url.pathname === '/api/library') {
+    const user = userForToken(bearer(req))
+    if (!user) {
+      json(res, 401, { error: 'unauthorized' })
+      return
+    }
+    if (req.method === 'GET') {
+      json(res, 200, { library: getLibrary(user.id) })
+      return
+    }
+    if (req.method === 'PUT') {
+      const body = await readJson(req, 8_000_000)
+      if (!body) {
+        json(res, 400, { error: 'invalid body' })
+        return
+      }
+      json(res, 200, { library: setLibrary(user.id, body) })
+      return
+    }
+    json(res, 405, { error: 'method not allowed' })
+    return
+  }
+
   if (url.pathname === '/api/audio') {
     await handleAudio(req, res, url.searchParams.get('id') || '', url.searchParams.get('src') || 'yt')
     return

@@ -4,6 +4,58 @@
 
 :root {
   color-scheme: dark;
+
+  /* Dark theme: ink-0 is the surface, ink-100 the foreground. Light theme
+   * inverts the ramp, so every `ink-*` class flips with it. */
+  --ink-0: 0 0 0;
+  --ink-5: 10 10 10;
+  --ink-10: 17 17 17;
+  --ink-15: 22 22 22;
+  --ink-20: 28 28 28;
+  --ink-25: 36 36 36;
+  --ink-30: 46 46 46;
+  --ink-40: 61 61 61;
+  --ink-50: 85 85 85;
+  --ink-55: 106 106 106;
+  --ink-60: 122 122 122;
+  --ink-70: 158 158 158;
+  --ink-80: 196 196 196;
+  --ink-90: 228 228 228;
+  --ink-95: 242 242 242;
+  --ink-100: 255 255 255;
+
+  --surface: 8 8 8;
+  --surface-strong: 6 6 6;
+  --rim: 255 255 255;
+  --rim-alpha: 0.08;
+  --shadow: 0 0 0;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --ink-0: 255 255 255;
+  --ink-5: 250 250 250;
+  --ink-10: 244 244 244;
+  --ink-15: 238 238 238;
+  --ink-20: 232 232 232;
+  --ink-25: 222 222 222;
+  --ink-30: 210 210 210;
+  --ink-40: 176 176 176;
+  --ink-50: 140 140 140;
+  --ink-55: 122 122 122;
+  --ink-60: 106 106 106;
+  --ink-70: 88 88 88;
+  --ink-80: 64 64 64;
+  --ink-90: 34 34 34;
+  --ink-95: 18 18 18;
+  --ink-100: 0 0 0;
+
+  --surface: 255 255 255;
+  --surface-strong: 250 250 250;
+  --rim: 0 0 0;
+  --rim-alpha: 0.1;
+  --shadow: 0 0 0;
 }
 
 * {
@@ -31,106 +83,60 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2e2e2e;
+  background: rgb(var(--ink-30));
   border-radius: 999px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4a4a4a;
+  background: rgb(var(--ink-40));
   background-clip: content-box;
 }
 
 /* ---------- selection ---------- */
 ::selection {
-  background: #ffffff;
-  color: #000000;
+  background: rgb(var(--ink-100));
+  color: rgb(var(--ink-0));
 }
 
 /* ---------- focus ---------- */
 :focus-visible {
-  outline: 2px solid #ffffff;
+  outline: 2px solid rgb(var(--ink-100));
   outline-offset: 2px;
 }
 
 @layer components {
-  .grain {
-    position: relative;
-  }
-  .grain::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0.035;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
-    mix-blend-mode: overlay;
-  }
-
-  /* ---------- liquid glass ----------
-   * A translucent, blurred, hairline-rimmed surface. The blur only reads as
-   * "glass" if something moves behind it, so the app sits over .mono-ambient.
-   * Only greys are used, keeping the design strictly black-and-white. */
+  /* ---------- surfaces ----------
+   * Flat, hairline-rimmed panes. Minimal by design: no gradients, no noise,
+   * no heavy blur — just a border and the theme surface. */
   .glass {
     position: relative;
-    background: rgba(8, 8, 8, 0.74);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    -webkit-backdrop-filter: blur(30px) saturate(1.4);
-    backdrop-filter: blur(30px) saturate(1.4);
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.09),
-      0 10px 34px -16px rgba(0, 0, 0, 0.9);
+    background: rgb(var(--surface) / 0.92);
+    border: 1px solid rgb(var(--rim) / var(--rim-alpha));
   }
   .glass-strong {
     position: relative;
-    background: rgba(6, 6, 6, 0.86);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    -webkit-backdrop-filter: blur(44px) saturate(1.5);
-    backdrop-filter: blur(44px) saturate(1.5);
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.12),
-      0 18px 50px -20px rgba(0, 0, 0, 0.95);
+    background: rgb(var(--surface-strong) / 0.97);
+    border: 1px solid rgb(var(--rim) / var(--rim-alpha));
   }
   .glass-menu {
     position: relative;
-    background: rgba(8, 8, 8, 0.88);
-    border: 1px solid rgba(255, 255, 255, 0.11);
-    -webkit-backdrop-filter: blur(28px) saturate(1.4);
-    backdrop-filter: blur(28px) saturate(1.4);
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.12),
-      0 20px 48px -18px rgba(0, 0, 0, 0.92);
+    background: rgb(var(--surface) / 0.98);
+    border: 1px solid rgb(var(--rim) / var(--rim-alpha));
+    box-shadow: 0 20px 48px -24px rgb(var(--shadow) / 0.6);
   }
-  /* The light catching the top edge of a pane of glass. */
-  .glass::before,
-  .glass-strong::before,
-  .glass-menu::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    background: linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.045),
-      rgba(255, 255, 255, 0.012) 40%,
-      rgba(255, 255, 255, 0) 62%
-    );
-  }
-  /* A sheet of glass only blurs when there is something behind it; the bar is
-   * transparent at the top of the page and fogs once content scrolls under. */
+  /* A bar is transparent at the top of the page and takes the surface once
+   * content scrolls under it. */
   .glass-bar {
     background: transparent;
-    -webkit-backdrop-filter: blur(0px);
-    backdrop-filter: blur(0px);
     border-bottom: 1px solid transparent;
-    transition: background 300ms ease, backdrop-filter 300ms ease, border-color 300ms ease;
+    transition: background 220ms ease, border-color 220ms ease;
   }
   .glass-bar-scrolled {
-    background: rgba(6, 6, 6, 0.78);
-    -webkit-backdrop-filter: blur(36px) saturate(1.4);
-    backdrop-filter: blur(36px) saturate(1.4);
-    border-bottom-color: rgba(255, 255, 255, 0.08);
+    background: rgb(var(--surface) / 0.94);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border-bottom-color: rgb(var(--rim) / var(--rim-alpha));
   }
 
   .card-hover {
@@ -168,19 +174,19 @@ input[type='range'].mono-range::-webkit-slider-runnable-track {
   border-radius: 999px;
   background: linear-gradient(
     to right,
-    #ffffff var(--fill, 0%),
-    #3d3d3d var(--fill, 0%)
+    rgb(var(--ink-100)) var(--fill, 0%),
+    rgb(var(--ink-30)) var(--fill, 0%)
   );
 }
 input[type='range'].mono-range::-moz-range-track {
   height: 3px;
   border-radius: 999px;
-  background: #3d3d3d;
+  background: rgb(var(--ink-30));
 }
 input[type='range'].mono-range::-moz-range-progress {
   height: 3px;
   border-radius: 999px;
-  background: #ffffff;
+  background: rgb(var(--ink-100));
 }
 input[type='range'].mono-range::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -189,7 +195,7 @@ input[type='range'].mono-range::-webkit-slider-thumb {
   width: 12px;
   margin-top: -4.5px;
   border-radius: 999px;
-  background: #ffffff;
+  background: rgb(var(--ink-100));
   opacity: 0;
   transition: opacity 0.15s ease;
 }
@@ -202,7 +208,7 @@ input[type='range'].mono-range::-moz-range-thumb {
   width: 12px;
   border: none;
   border-radius: 999px;
-  background: #ffffff;
+  background: rgb(var(--ink-100));
   opacity: 0;
 }
 input[type='range'].mono-range:hover::-moz-range-thumb {
@@ -257,75 +263,27 @@ a {
   88%, 100% { transform: translateX(calc(-100% + 200px)); }
 }
 
-/* ---------- ambient monochrome backdrop ----------
- * Soft grey light that drifts behind the glass panes. Without it a blurred
- * surface looks flat, because there is nothing for the blur to reveal. */
+/* ---------- backdrop ----------
+ * A single flat surface colour. The drifting ambient light is gone: minimal
+ * means the panes themselves carry the design, not moving background glow. */
 .mono-ambient {
   position: fixed;
   inset: 0;
   z-index: -1;
-  overflow: hidden;
   pointer-events: none;
-  background: #000;
-}
-.mono-ambient span {
-  position: absolute;
-  display: block;
-  border-radius: 9999px;
-  filter: blur(90px);
-}
-.mono-ambient span:nth-child(1) {
-  width: 46vw;
-  height: 46vw;
-  top: -12vw;
-  left: -8vw;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 70%);
-  animation: ambient-a 26s ease-in-out infinite;
-}
-.mono-ambient span:nth-child(2) {
-  width: 40vw;
-  height: 40vw;
-  bottom: -14vw;
-  right: -6vw;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 70%);
-  animation: ambient-b 32s ease-in-out infinite;
-}
-.mono-ambient span:nth-child(3) {
-  width: 30vw;
-  height: 30vw;
-  top: 40%;
-  left: 55%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 70%);
-  animation: ambient-c 38s ease-in-out infinite;
-}
-@keyframes ambient-a {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(9vw, 7vw, 0) scale(1.18); }
-}
-@keyframes ambient-b {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); }
-  50% { transform: translate3d(-8vw, -6vw, 0) scale(1); }
-}
-@keyframes ambient-c {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(-6vw, 5vw, 0) scale(1.22); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .mono-ambient span { animation: none; }
+  background: rgb(var(--ink-0));
 }
 
-/* Respect the OS "reduce transparency" setting: fall back to solid panels so
-   text never sits on an unreadable blur. */
+/* Respect the OS "reduce transparency" setting: keep panels solid. */
 @media (prefers-reduced-transparency: reduce) {
   .glass,
   .glass-strong,
   .glass-menu,
   .glass-bar-scrolled {
-    background: #0e0e0e;
+    background: rgb(var(--surface));
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  .mono-ambient { display: none; }
 }
 
 .no-scrollbar::-webkit-scrollbar {

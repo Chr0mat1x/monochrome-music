@@ -1,7 +1,8 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore'
 import { Cover } from './Cover'
-import { IconHeart, IconHome, IconLibrary, IconPlus, IconSearch, IconSparkles, IconWave } from './Icons'
+import { ThemeToggle } from './ThemeToggle'
+import { IconHeart, IconHome, IconLibrary, IconPlus, IconSearch, IconSparkles, IconUser, IconWave } from './Icons'
 
 const navItem = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-200 ${
@@ -11,18 +12,22 @@ const navItem = ({ isActive }: { isActive: boolean }) =>
 export function Sidebar({ onClose }: { onClose?: () => void }) {
   const playlists = useStore((s) => s.playlists)
   const liked = useStore((s) => s.liked)
+  const user = useStore((s) => s.user)
   const createPlaylist = useStore((s) => s.createPlaylist)
   const navigate = useNavigate()
 
   return (
     <aside className="flex h-full w-full flex-col gap-2 p-2">
       <div className="glass rounded-2xl p-2">
-        <Link to="/" onClick={onClose} className="flex items-center gap-2 px-3 py-3">
-          <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-ink-100">
-            <span className="h-2 w-2 rounded-full bg-ink-100" />
-          </span>
-          <span className="text-[15px] font-black uppercase tracking-[0.28em] text-ink-100">Mono</span>
-        </Link>
+        <div className="flex items-center justify-between px-3 py-3">
+          <Link to="/" onClick={onClose} className="flex items-center gap-2">
+            <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-ink-100">
+              <span className="h-2 w-2 rounded-full bg-ink-100" />
+            </span>
+            <span className="text-[15px] font-black uppercase tracking-[0.28em] text-ink-100">Mono</span>
+          </Link>
+          <ThemeToggle className="h-8 w-8" />
+        </div>
         <nav className="flex flex-col gap-0.5">
           <NavLink to="/" end className={navItem} onClick={onClose}>
             <IconHome width={19} height={19} /> Главная
@@ -40,6 +45,21 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             <IconLibrary width={19} height={19} /> Медиатека
           </NavLink>
         </nav>
+
+        <Link
+          to="/auth"
+          onClick={onClose}
+          className="mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-ink-70 transition-colors hover:text-ink-100"
+        >
+          {user ? (
+            <span className="grid h-5 w-5 place-items-center rounded-full bg-ink-100 text-[9px] font-black text-ink-0">
+              {user.name.slice(0, 1).toUpperCase()}
+            </span>
+          ) : (
+            <IconUser width={19} height={19} />
+          )}
+          <span className="min-w-0 truncate">{user ? user.name : 'Войти'}</span>
+        </Link>
       </div>
 
       <div className="glass flex min-h-0 flex-1 flex-col rounded-2xl">

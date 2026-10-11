@@ -4,6 +4,8 @@ import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { Player } from './components/Player'
 import { MobileNav } from './components/MobileNav'
+import { AuthPanel } from './components/AuthPanel'
+import { useStore } from './store/useStore'
 import { Home } from './pages/Home'
 import { Search } from './pages/Search'
 import { Generate } from './pages/Generate'
@@ -26,15 +28,17 @@ function ScrollReset() {
 
 export default function App() {
   const [navOpen, setNavOpen] = useState(false)
+  const restoreSession = useStore((s) => s.restoreSession)
+
+  // Pull the account (and its library) in once, on start.
+  useEffect(() => {
+    void restoreSession()
+  }, [restoreSession])
 
   return (
     <div className="flex h-[100dvh] w-screen flex-col gap-2 p-2 lg:flex-row">
-      {/* ambient monochrome light the glass panes blur */}
-      <div className="mono-ambient" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
+      {/* flat backdrop; the panes carry the design */}
+      <div className="mono-ambient" aria-hidden="true" />
 
       {/* desktop sidebar */}
       <div className="hidden w-64 shrink-0 lg:block">
@@ -70,6 +74,7 @@ export default function App() {
               <Route path="/artist/:name" element={<ArtistPage />} />
               <Route path="/playlist/:id" element={<PlaylistPage />} />
               <Route path="/liked" element={<LikedSongs />} />
+              <Route path="/auth" element={<AuthPanel />} />
               <Route path="/home" element={<Navigate to="/" replace />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
