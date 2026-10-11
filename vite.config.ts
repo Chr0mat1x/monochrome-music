@@ -12,6 +12,10 @@ export default defineConfig({
     strictPort: true,
     allowedHosts: true,
     hmr: { clientPort: 443 },
+    // The Android build copies `dist/` into android/app/src/main/assets. Without
+    // this, building an APK rewrites a file Vite is watching and the dev page
+    // reloads (stopping playback) mid-session.
+    watch: { ignored: ['**/android/**', '**/downloads/**'] },
     proxy: {
       '/api': { target: AUDIO_SERVER, changeOrigin: true },
       '/MONOCHROME.apk': { target: AUDIO_SERVER, changeOrigin: true },
