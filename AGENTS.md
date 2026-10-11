@@ -213,4 +213,16 @@ runs full-screen on a phone from the home screen.
 - **Original recordings first.** `preferOriginals` drops lyric videos, covers,
   karaoke and sped-up edits from search/Home/generator results, but keeps the
   unfiltered list when fewer than 8 real songs remain (niche queries).
+- **SoundCloud on the phone (native bridge).** SoundCloud streams full songs
+  from any IP and its CDN sends `Access-Control-Allow-Origin: *`, but the API
+  calls that search it and sign a media URL send no CORS headers — so the page
+  cannot make them. The Android shell therefore exposes `window.MonoNative`
+  (`SoundCloudBridge.java`, registered in `MainActivity`), which runs those
+  calls in Java where no CORS rule applies. `src/lib/nativeBridge.ts` wraps it
+  (async, callback id → `window.__monoNativeResult`); `searchSoundCloud` and
+  `resolveFullAudio(id, 'sc')` use it when present. This gives the offline APK a
+  second full-length source beside YouTube's IFrame player. The signed URL
+  expires, so the native path deliberately bypasses `resolveCache`.
+  Gotcha: SoundCloud serves a *script-free* page to mobile user-agents, which
+  hides the client id — the bridge must scrape with a desktop UA.
 

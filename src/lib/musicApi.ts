@@ -1,4 +1,5 @@
 import type { Album, Artist, Source, Track } from '../types'
+import { hasNativeBridge, nativeResolveSoundCloud, nativeSearchSoundCloud } from './nativeBridge'
 
 /* ------------------------------------------------------------------ *
  * Three live, CORS-enabled catalogues:
@@ -604,6 +605,24 @@ async function searchYouTubeServer(query: string, limit: number): Promise<Track[
 
 export async function searchSoundCloud(query: string, limit = 25): Promise<Track[]> {
   if (!query.trim()) return []
+  // The Android shell can query SoundCloud from Java, which is the only way to
+  // search it without the companion server (the API sends no CORS headers).
+  if (hasNativeBridge()) {
+    const native = await nativeSearchSoundCloud(query)
+    if (native.length) {
+      return native
+        .filter((i) => i.id && i.title)
+        .map((i) =>
+          buildSoundCloudTrack({
+            id: i.id,
+            title: i.title,
+            channel: i.artist,
+            duration: i.duration,
+            thumbnail: i.artwork,
+          }),
+        )
+    }
+  }
   const items = await serverSearch(query, limit, 'sc').catch(() => [])
   return items.filter((i) => i.id && i.title).map(buildSoundCloudTrack)
 }
@@ -774,9 +793,9 @@ async function findSoundCloudTrack(artist: string, title: string): Promise<Track
     .sort((a, b) => b.score - a.score)
 
   // SoundCloud's official label uploads are DRM-protected, so the best title
-  // match is often unplayable. When a server is available, walk the ranked
-  // list and return the first upload that actually resolves.
-  if (await hasAudioServer()) {
+  // match is often unplayable. When a server (or the Android bridge) is
+  // available, walk the ranked list and return the first upload that resolves.
+  if ((await hasAudioServer()) || hasNativeBridge()) {
     const deadline = Date.now() + 12000
     for (const { t } of scored.slice(0, 6)) {
       if (await resolveFullAudio(t.sourceId, 'sc')) return t
@@ -905,11 +924,11 @@ export async function upgradeToFullTrack(track: Track): Promise<Track | null> {
 
 async function resolveFullTrack(track: Track): Promise<Track | null> {
   const server = await hasAudioServer()
-  // SoundCloud streams full-length audio from any IP, but only the companion
-  // server can extract it. Without a server (the offline APK) skip SoundCloud
-  // entirely and let YouTube's IFrame player — which runs from the phone's own
-  // residential IP — supply the whole song.
-  if (server) {
+  // SoundCloud streams full-length audio from any IP. The companion server
+  // extracts it on the dev machine; inside the Android shell the native bridge
+  // signs the URL in Java instead. Either way, skip SoundCloud when neither is
+  // present and let YouTube's IFrame player supply the whole song.
+  if (server || hasNativeBridge()) {
     const sc = await findSoundCloudTrack(track.artist, track.title).catch(() => null)
     if (sc) {
       const streamUrl = await resolveFullAudio(sc.sourceId, 'sc').catch(() => null)
@@ -1018,19 +1037,32 @@ const resolveCache = new Map<string, Promise<string | null>>()
  * `src` is 'yt' (YouTube video id) or 'sc' (SoundCloud numeric track id).
  */
 export function resolveFullAudio(sourceId: string, src: 'yt' | 'sc' = 'yt'): Promise<string | null> {
+  // In the Android shell the SoundCloud URL is signed in Java, because the
+  // SoundCloud API refuses to answer the page directly (no CORS headers). The
+  // signed URL expires, so it is deliberately not cached — it is re-signed on
+  // every load, which is cheap.
+  if (src === 'sc' && hasNativeBridge()) {
+    return nativeResolveSoundCloud(sourceId).then(async (native) => {
+      if (native) return native
+      if (!(await hasAudioServer())) return null
+      return resolveViaServer(sourceId, src)
+    })
+  }
   const key = `${src}:${sourceId}`
   const hit = resolveCache.get(key)
   if (hit) return hit
-  const task = (async () => {
-    if (!(await hasAudioServer())) return null
-    const data = await jsonFetch<{ ok?: boolean }>(
-      `${AUDIO_SERVER}/resolve?src=${src}&id=${sourceId}`,
-      20000,
-    )
-    return data?.ok ? `${AUDIO_SERVER}/audio?src=${src}&id=${sourceId}` : null
-  })()
+  const task = resolveViaServer(sourceId, src)
   resolveCache.set(key, task)
   return task
+}
+
+async function resolveViaServer(sourceId: string, src: 'yt' | 'sc'): Promise<string | null> {
+  if (!(await hasAudioServer())) return null
+  const data = await jsonFetch<{ ok?: boolean }>(
+    `${AUDIO_SERVER}/resolve?src=${src}&id=${sourceId}`,
+    20000,
+  )
+  return data?.ok ? `${AUDIO_SERVER}/audio?src=${src}&id=${sourceId}` : null
 }
 
 /* ------------------------------------------------------------------ *

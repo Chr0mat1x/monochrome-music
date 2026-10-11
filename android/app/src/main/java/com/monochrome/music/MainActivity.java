@@ -87,6 +87,11 @@ public class MainActivity extends Activity {
             }
         });
 
+        // Exposed as window.MonoNative.resolveSoundCloud(id). The page uses it to
+        // get full-length SoundCloud audio without the companion server (which
+        // only exists on the dev machine).
+        web.addJavascriptInterface(new SoundCloudBridge(web), "MonoNative");
+
         root.addView(web, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
