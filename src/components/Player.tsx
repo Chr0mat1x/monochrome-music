@@ -106,7 +106,7 @@ export function Player() {
   return (
     <>
       <footer
-        className="z-40 shrink-0 border-t border-ink-25 bg-ink-5 px-3 py-2 sm:px-4"
+        className="glass-strong z-40 shrink-0 rounded-2xl px-3 py-2 sm:px-4"
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
         {playbackNote && (

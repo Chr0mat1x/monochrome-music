@@ -49,7 +49,7 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
     <div
       ref={ref}
       style={{ left, top }}
-      className="fixed z-50 w-56 animate-fade-up overflow-hidden rounded-lg border border-ink-30 bg-ink-10 py-1 text-sm shadow-2xl shadow-black"
+      className="glass-menu fixed z-50 w-56 animate-fade-up overflow-hidden rounded-xl py-1 text-sm"
       onContextMenu={(e) => e.preventDefault()}
     >
       <button

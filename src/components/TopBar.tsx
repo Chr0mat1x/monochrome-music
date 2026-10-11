@@ -18,8 +18,8 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
 
   return (
     <header
-      className={`sticky top-0 z-30 flex items-center gap-3 px-4 py-3 transition-colors duration-300 ${
-        scrolled ? 'bg-ink-5/90 backdrop-blur-xl' : 'bg-transparent'
+      className={`sticky top-0 z-30 flex items-center gap-3 px-4 py-3 glass-bar ${
+        scrolled ? 'glass-bar-scrolled' : ''
       }`}
     >
       {onOpenNav && (

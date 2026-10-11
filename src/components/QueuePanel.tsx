@@ -13,7 +13,7 @@ export function QueuePanel({ onClose }: { onClose: () => void }) {
   const upcoming = queue.slice(queueIndex + 1)
 
   return (
-    <div className="fixed bottom-[5.5rem] right-3 z-50 flex max-h-[60vh] w-[22rem] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-xl border border-ink-30 bg-ink-10 shadow-2xl shadow-black">
+    <div className="glass-menu fixed bottom-[5.5rem] right-3 z-50 flex max-h-[60vh] w-[22rem] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl">
       <div className="flex items-center justify-between border-b border-ink-25 px-4 py-3">
         <span className="flex items-center gap-2 text-sm font-semibold text-ink-95">
           <IconQueue width={16} height={16} /> Очередь

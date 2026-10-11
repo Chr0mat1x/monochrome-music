@@ -12,7 +12,7 @@ const tabs = [
 /** Thumb-reachable bottom navigation, shown only on narrow screens. */
 export function MobileNav() {
   return (
-    <nav className="nav-safe z-40 grid shrink-0 grid-cols-5 border-t border-ink-25 bg-ink-5 px-1 pb-[env(safe-area-inset-bottom)] lg:hidden">
+    <nav className="glass-strong nav-safe z-40 grid shrink-0 grid-cols-5 rounded-2xl px-1 pb-[env(safe-area-inset-bottom)] lg:hidden">
       {tabs.map(({ to, end, label, Icon }) => (
         <NavLink
           key={to}

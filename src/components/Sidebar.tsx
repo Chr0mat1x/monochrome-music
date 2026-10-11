@@ -15,8 +15,8 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const navigate = useNavigate()
 
   return (
-    <aside className="flex h-full w-full flex-col gap-2 bg-ink-0 p-2">
-      <div className="rounded-lg bg-ink-10 p-2">
+    <aside className="flex h-full w-full flex-col gap-2 p-2">
+      <div className="glass rounded-2xl p-2">
         <Link to="/" onClick={onClose} className="flex items-center gap-2 px-3 py-3">
           <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-ink-100">
             <span className="h-2 w-2 rounded-full bg-ink-100" />
@@ -39,7 +39,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
         </nav>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-ink-10">
+      <div className="glass flex min-h-0 flex-1 flex-col rounded-2xl">
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-xs font-semibold uppercase tracking-widest text-ink-60">Плейлисты</span>
           <button

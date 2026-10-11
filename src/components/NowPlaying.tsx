@@ -59,7 +59,7 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
   const progress = duration ? (pos / duration) * 100 : 0
 
   return (
-    <div className="fixed inset-0 z-[60] flex animate-fade-up flex-col bg-ink-0">
+    <div className="glass-strong fixed inset-0 z-[60] flex animate-fade-up flex-col">
       <div className="pointer-events-none absolute inset-0 opacity-30">
         <Cover seed={track.id} artwork={track.artwork} tone={track.valence} rounded="rounded-none" className="h-full w-full" />
       </div>

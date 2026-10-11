@@ -225,4 +225,13 @@ runs full-screen on a phone from the home screen.
   expires, so the native path deliberately bypasses `resolveCache`.
   Gotcha: SoundCloud serves a *script-free* page to mobile user-agents, which
   hides the client id — the bridge must scrape with a desktop UA.
+- **Liquid glass UI.** Surfaces are frosted panes (`.glass`, `.glass-strong`,
+  `.glass-menu`) with a hairline rim, an inner top highlight and a real
+  `backdrop-filter` blur — plus `-webkit-backdrop-filter` for iOS. The top bar
+  uses `.glass-bar` / `.glass-bar-scrolled` so it only fogs once content
+  scrolls under it. A blur is invisible over a flat black page, so `.mono-ambient`
+  paints slow-drifting grey light behind the app (App.tsx renders its three
+  spans); the panes blur that light, which is what reads as glass. Everything
+  stays strictly greyscale. `prefers-reduced-transparency` falls back to solid
+  panels and hides the ambient layer; `prefers-reduced-motion` stops the drift.
 

@@ -56,7 +56,7 @@ export function SleepTimer() {
       )}
 
       {open && (
-        <div className="absolute bottom-10 right-0 z-50 w-44 overflow-hidden rounded-lg border border-ink-30 bg-ink-10 py-1 text-sm shadow-2xl shadow-black">
+        <div className="glass-menu absolute bottom-10 right-0 z-50 w-44 overflow-hidden rounded-xl py-1 text-sm">
           <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-widest text-ink-50">Таймер сна</p>
           {OPTIONS.map((m) => (
             <button

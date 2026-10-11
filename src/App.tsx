@@ -27,7 +27,14 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false)
 
   return (
-    <div className="flex h-[100dvh] w-screen flex-col gap-2 bg-ink-0 p-2 lg:flex-row">
+    <div className="flex h-[100dvh] w-screen flex-col gap-2 p-2 lg:flex-row">
+      {/* ambient monochrome light the glass panes blur */}
+      <div className="mono-ambient" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+
       {/* desktop sidebar */}
       <div className="hidden w-64 shrink-0 lg:block">
         <Sidebar />
@@ -40,7 +47,7 @@ export default function App() {
             <Sidebar onClose={() => setNavOpen(false)} />
           </div>
           <button
-            className="flex-1 bg-black/70 backdrop-blur-sm"
+            className="flex-1 bg-black/60 backdrop-blur-md"
             onClick={() => setNavOpen(false)}
             aria-label="Закрыть меню"
           />
@@ -48,7 +55,7 @@ export default function App() {
       )}
 
       <main className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-ink-5 grain">
+        <div className="glass relative min-h-0 flex-1 overflow-hidden rounded-2xl grain">
           <div id="main-scroll" className="h-full overflow-y-auto">
             <TopBar onOpenNav={() => setNavOpen(true)} />
             <ScrollReset />
