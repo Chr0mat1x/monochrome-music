@@ -35,11 +35,19 @@ export function Wave() {
   const stopWave = useStore((s) => s.stopWave)
   const setWaveSeed = useStore((s) => s.setWaveSeed)
   const extendWave = useStore((s) => s.extendWave)
+  const prewarmWave = useStore((s) => s.prewarmWave)
   const togglePlay = useStore((s) => s.togglePlay)
 
   const [draft, setDraft] = useState(waveSeed)
 
   useEffect(() => setDraft(waveSeed), [waveSeed])
+
+  // Fetch the opening batch while the listener is still reading the page, so
+  // the first press of play does not wait on the network.
+  useEffect(() => {
+    if (waveMode) return
+    prewarmWave('')
+  }, [waveMode, prewarmWave])
 
   const taste = useMemo(() => buildTaste(liked, recentlyPlayed), [liked, recentlyPlayed])
 
@@ -90,7 +98,13 @@ export function Wave() {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-xs uppercase tracking-widest text-ink-50">Настроение:</span>
             {SEEDS.map((s) => (
-              <button key={s} className="chip" onClick={() => { setDraft(s); void startWave(s) }}>
+              <button
+                key={s}
+                className="chip"
+                onMouseEnter={() => prewarmWave(s)}
+                onFocus={() => prewarmWave(s)}
+                onClick={() => { setDraft(s); void startWave(s) }}
+              >
                 {s}
               </button>
             ))}

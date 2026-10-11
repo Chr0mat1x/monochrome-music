@@ -1,6 +1,6 @@
 import type { Track } from '../types'
 import { planMoodLocal, planToQuery } from './moodPlanner'
-import { searchAll, isPlayableTrack, preferOriginals } from './musicApi'
+import { searchAll, audiusTopUp, isPlayableTrack, preferOriginals } from './musicApi'
 
 /**
  * "Моя волна" — an endless personal stream. There is no user account and no
@@ -130,12 +130,18 @@ function distance(t: Track, taste: Taste): number {
   const hay = textOf(t)
   if (taste.genres.length && !taste.genres.some((g) => hay.includes(g))) d += 14
   if (taste.artists.some((a) => hay.includes(a))) d -= 18
+  // DJ sets and mixes are technically songs to the catalogues, not to a wave.
+  if (t.duration && (t.duration > 900 || t.duration < 60)) d += 40
   return d
 }
 
 /**
  * Build the next batch of the wave. `exclude` holds ids already in the queue so
  * the stream never repeats itself, and one artist may appear at most twice.
+ *
+ * The first batch is biased toward tracks that play the instant they arrive
+ * (Audius whole songs) so the wave starts immediately; later batches can take
+ * in the commercial catalogues, whose previews are upgraded in the background.
  */
 export async function nextWaveBatch(
   liked: Track[],
@@ -143,6 +149,7 @@ export async function nextWaveBatch(
   exclude: Set<string>,
   count = 20,
   seed?: string,
+  instant = false,
 ): Promise<{ tracks: Track[]; taste: Taste }> {
   const { taste, seedGenres } = withSeed(buildTaste(liked, recent), seed)
   const queries = pickQueries(taste, seed)
@@ -161,14 +168,42 @@ export async function nextWaveBatch(
     }
   }
 
+  // Whole songs first, so the opening of the wave needs no per-track resolve.
+  if (instant) {
+    // Audius is full of DJ sets and mixes; keep the instant pool to real songs.
+    const playableLength = (t: Track) => !t.duration || (t.duration >= 90 && t.duration <= 900)
+    const live = pool.filter((t) => !t.preview && t.streamable !== false && playableLength(t))
+    const extra = await audiusTopUp(queries[0] ?? taste.genres[0] ?? 'electronic', count)
+    for (const t of extra) {
+      if (exclude.has(t.id) || seen.has(t.id) || t.preview || !playableLength(t)) continue
+      seen.add(t.id)
+      live.push(t)
+    }
+    if (live.length >= 8) {
+      return { tracks: takeVaried(rank(live, taste, seedGenres), count), taste }
+    }
+    // Not enough whole songs in this mood: mix them in front of the previews.
+    const rest = pool.filter((t) => t.preview)
+    const mixed = [...live, ...rest]
+    return { tracks: takeVaried(rank(mixed, taste, seedGenres), count), taste }
+  }
+
   const usable = preferOriginals(pool.filter(isPlayableTrack))
-  const ranked = usable
+  return { tracks: takeVaried(rank(usable, taste, seedGenres), count), taste }
+}
+
+function rank(tracks: Track[], taste: Taste, seedGenres: string[]): Track[] {
+  return tracks
     .map((t) => ({ t, score: distance(t, taste) + seedBonus(t, seedGenres) }))
     .sort((a, b) => a.score - b.score)
+    .map((s) => s.t)
+}
 
+/** Best-ranked first, but no artist may take more than two slots. */
+function takeVaried(ranked: Track[], count: number): Track[] {
   const byArtist = new Map<string, number>()
   const tracks: Track[] = []
-  for (const { t } of ranked) {
+  for (const t of ranked) {
     if (tracks.length >= count) break
     const key = t.artist.toLowerCase()
     const n = byArtist.get(key) ?? 0
@@ -176,8 +211,7 @@ export async function nextWaveBatch(
     byArtist.set(key, n + 1)
     tracks.push(t)
   }
-
-  return { tracks, taste }
+  return tracks
 }
 
 /** A typed mood should surface first, so its own genres get a small nudge. */

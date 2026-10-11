@@ -850,14 +850,27 @@ export function preferOriginals(tracks: Track[], min = 8): Track[] {
  * Combined search — Deezer first (best coverage + images), then
  * interleave iTunes and Audius, deduped by title+artist.
  * ------------------------------------------------------------------ */
-export async function searchAll(query: string, limit = 40): Promise<Track[]> {
-  const per = Math.ceil(limit / 4)
-  const [dz, it, yt, au] = await Promise.all([
-    searchDeezer(query, per).catch(() => []),
-    searchItunes(query, per).catch(() => []),
-    searchYouTube(query, per).catch(() => []),
-    searchAudius(query, per).catch(() => []),
-  ])
+/**
+ * Fan a query out across the catalogues. Deezer and iTunes answer in ~300ms
+ * and Audius streams whole songs, so those three carry the default path.
+ * YouTube and SoundCloud both go through yt-dlp — a fresh Python process per
+ * call, 1.5-3s each — so they are only worth the wait when a search page
+ * explicitly wants their content (`soundcloud: true`).
+ *
+ * Results are memoised for a few minutes: the wave re-asks the same handful of
+ * queries on every batch, and the home rows and search page overlap with them.
+ */
+const searchCache = new Map<string, { tracks: Track[]; at: number }>()
+const SEARCH_TTL = 5 * 60 * 1000
+
+export async function searchAll(query: string, limit = 40, soundcloud = false): Promise<Track[]> {
+  const key = `${query}|${limit}|${soundcloud ? 'sc' : ''}`
+  const hit = searchCache.get(key)
+  if (hit && Date.now() - hit.at < SEARCH_TTL) return hit.tracks
+
+  const sources: Promise<Track[]>[] = [searchDeezer(query, limit), searchItunes(query, limit), searchAudius(query, limit)]
+  if (soundcloud) sources.push(searchSoundCloud(query, limit), searchYouTube(query, limit))
+  const batches = await Promise.all(sources.map((p) => p.catch(() => [])))
 
   const seen = new Set<string>()
   const out: Track[] = []
@@ -869,14 +882,22 @@ export async function searchAll(query: string, limit = 40): Promise<Track[]> {
     out.push(t)
   }
 
-  const max = Math.max(dz.length, it.length, yt.length, au.length)
+  const max = Math.max(...batches.map((b) => b.length))
   for (let i = 0; i < max; i++) {
-    push(dz[i])
-    push(it[i])
-    push(yt[i])
-    push(au[i])
+    for (const batch of batches) push(batch[i])
   }
+  if (out.length) searchCache.set(key, { tracks: out, at: Date.now() })
   return out
+}
+
+/**
+ * Whole songs that are playable the instant they arrive (Audius streams
+ * directly, so nothing has to be resolved first). Used to top up a result set
+ * so a stream can start without waiting on any per-track resolution.
+ */
+export async function audiusTopUp(term: string, limit: number): Promise<Track[]> {
+  if (limit <= 0) return []
+  return searchAudius(term, Math.min(limit, 25)).catch(() => [])
 }
 
 /**

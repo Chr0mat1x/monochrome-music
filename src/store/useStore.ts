@@ -3,6 +3,7 @@ import type { Playlist, RepeatMode, Track } from '../types'
 import { engine } from '../lib/audioEngine'
 import { cachedFullTrack, findAudiusFull, findSoundCloudFull, inferProfile, prefetchFullTracks, resolveFullAudio, subscribeFullTracks, upgradeToFullTrack } from '../lib/musicApi'
 import { nextWaveBatch } from '../lib/wave'
+import type { Taste } from '../lib/wave'
 
 const LS_KEY = 'monochrome.v2'
 
@@ -82,6 +83,11 @@ interface StoreState {
   setWaveSeed: (seed: string) => void
   /** Fetch and append the next batch; called when the queue runs low. */
   extendWave: () => Promise<void>
+  /**
+   * Fetch the opening batch before it is asked for, so pressing play on the
+   * wave page starts the music immediately instead of waiting on the network.
+   */
+  prewarmWave: (seed?: string) => void
   /** Pull the current track out of the wave and keep it in the library. */
   likeCurrentIntoWave: () => void
 
@@ -150,6 +156,8 @@ export const useStore = create<StoreState>((set, get) => {
    * do not fire duplicate YouTube lookups.
    */
   const upgrades = new Map<string, Promise<Track | null>>()
+  /** Prefetched opening batches for the wave, keyed by mood text. */
+  const wavePrewarm = new Map<string, Promise<{ tracks: Track[]; taste: Taste }>>()
 
   // When any page resolves a full version (e.g. the mood generator pre-fetches
   // a whole playlist), fold it into the live queue so an already-playing
@@ -409,13 +417,15 @@ export const useStore = create<StoreState>((set, get) => {
       const cleanSeed = (seed ?? get().waveSeed ?? '').trim()
       set({ waveMode: true, waveSeed: cleanSeed, waveLoading: true })
       const { liked, recentlyPlayed } = get()
-      const { tracks, taste } = await nextWaveBatch(
-        liked,
-        recentlyPlayed,
-        new Set(),
-        24,
-        cleanSeed,
-      )
+      // Reuse the batch the wave page prewarmed while the listener was reading,
+      // so pressing play starts instantly instead of waiting on the network.
+      const warmed = wavePrewarm.get(cleanSeed || '~default')
+      let batch = warmed
+      if (!batch) {
+        batch = nextWaveBatch(liked, recentlyPlayed, new Set(), 24, cleanSeed, true)
+        wavePrewarm.set(cleanSeed || '~default', batch)
+      }
+      const { tracks, taste } = await batch
       if (!tracks.length) {
         set({ waveLoading: false })
         return
@@ -432,6 +442,19 @@ export const useStore = create<StoreState>((set, get) => {
     stopWave: () => set({ waveMode: false, waveSeed: '', waveLoading: false }),
 
     setWaveSeed: (seed) => set({ waveSeed: seed }),
+
+    prewarmWave: (seed) => {
+      const cleanSeed = (seed ?? '').trim()
+      const key = cleanSeed || '~default'
+      if (wavePrewarm.has(key)) return
+      const { liked, recentlyPlayed } = get()
+      const task = nextWaveBatch(liked, recentlyPlayed, new Set(), 24, cleanSeed, true).then((r) => {
+        get().register(r.tracks)
+        return r
+      })
+      wavePrewarm.set(key, task)
+      task.catch(() => wavePrewarm.delete(key))
+    },
 
     extendWave: async () => {
       const { waveMode, waveLoading, queue, liked, recentlyPlayed, waveSeed } = get()

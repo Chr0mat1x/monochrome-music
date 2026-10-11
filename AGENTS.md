@@ -245,4 +245,13 @@ runs full-screen on a phone from the home screen.
   fewer than five tracks remain, so the stream never stalls. A typed mood
   (`waveSeed`) blends into the profile via moodPlanner and outranks the
   inferred genres.
+- **Search speed.** `searchAll` deliberately queries only Deezer, iTunes and
+  Audius. YouTube and SoundCloud are reachable only through yt-dlp on the
+  companion server, and each call spawns a fresh Python process (1.5-3s), so
+  they are opt-in via `searchAll(q, n, true)` for pages that want them. Results
+  are memoised for five minutes. The wave page calls `prewarmWave` on mount, so
+  the opening batch is already fetched by the time the listener presses play;
+  hovering a mood chip prewarms that mood too. The first wave batch favours
+  whole songs (Audius streams directly, nothing to resolve) so playback starts
+  without waiting on per-track lookups, and DJ sets are filtered out by length.
 
