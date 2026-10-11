@@ -61,7 +61,22 @@ export class AudioEngine {
     el.crossOrigin = 'anonymous'
     el.addEventListener('ended', () => this.events.onEnded?.())
     el.addEventListener('error', () => {
-      if (!this.loading) this.events.onError?.()
+      if (this.loading) return
+      // A URL minted during the search can expire before the listener gets to
+      // the track. Drop it and re-resolve once rather than failing the play.
+      const cur = this.current
+      if (cur?.source === 'soundcloud' && cur.streamUrl) {
+        this.current = { ...cur, streamUrl: null }
+        void resolveFullAudio(cur.sourceId, 'sc')
+          .then((url) => {
+            if (!url || this.current?.id !== cur.id) return
+            this.current = { ...cur, streamUrl: url }
+            this.load({ ...cur, streamUrl: url }, true, this.getPosition())
+          })
+          .catch(() => this.events.onError?.())
+        return
+      }
+      this.events.onError?.()
     })
     el.addEventListener('durationchange', () => {
       if (Number.isFinite(el.duration)) this.events.onDuration?.(el.duration)
@@ -180,7 +195,9 @@ export class AudioEngine {
   private async urlFor(track: Track): Promise<string | null> {
     if (track.source === 'audius') return resolveAudiusStream(track.sourceId)
     if (track.source === 'deezer') return resolveDeezerStream(track.sourceId)
-    if (track.source === 'soundcloud') return resolveFullAudio(track.sourceId, 'sc')
+    // A SoundCloud track that already carries its URL (resolved during the
+    // search) plays without another round trip to the extractor.
+    if (track.source === 'soundcloud') return track.streamUrl ?? resolveFullAudio(track.sourceId, 'sc')
     return track.streamUrl
   }
 

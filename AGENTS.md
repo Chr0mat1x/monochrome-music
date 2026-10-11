@@ -101,6 +101,29 @@ runs full-screen on a phone from the home screen.
 - SoundCloud search/resolve runs server-side (yt-dlp `scsearch`); the browser
   never talks to SoundCloud directly. `http_mp3` is chosen because a browser
   `<audio>` element cannot play SoundCloud's HLS manifest.
+- **SoundCloud calls are serialised and batched** (`scSerial`, `scSearchDirect`,
+  `scResolveMany`, `/api/sc-resolve`). yt-dlp pays ~0.5s of Python startup per
+  process, so one process per candidate dominated the wait; and SoundCloud
+  answers a *burst* of extractor calls with HTTP 403 that can lock playback out
+  for minutes. `/api/search?src=sc` therefore searches **and resolves** the
+  results in one process, and `/api/sc-resolve?ids=a,b,c` resolves a whole batch
+  in one. Every SoundCloud extraction goes through `scSerial`, so the server
+  never fires two at once. The resulting direct URL is stored on the track
+  (`streamUrl`), so clicking a search result plays instantly instead of
+  triggering another lookup; `AudioEngine.urlFor` reuses it and re-resolves once
+  if the URL has expired. A failed/rate-limited SoundCloud search returns an
+  empty list rather than a 502, so Deezer/iTunes/Audius still fill the page.
+- **Extractor backoff.** Both sources refuse anonymous datacenter IPs in bursts
+  (SoundCloud: HTTP 403; YouTube: "Sign in to confirm you're not a bot" / "This
+  video is not available"). `directUrl`/`scDirectUrl` set `ytBlockedUntil` /
+  `scBlockedUntil` when they see it, so the server stops spawning doomed yt-dlp
+  runs for the next few minutes instead of paying one failed process per
+  candidate. `run()` also treats printed output as success even when yt-dlp
+  exits non-zero, because `--ignore-errors` still exits 1 when one candidate is
+  DRM-protected while the rest printed fine.
+- `prefetchFullTracks` only warms the first 16 tracks: every SoundCloud lookup
+  competes for the same serialised queue, so pre-resolving a whole 40-item list
+  delays the tracks the listener is actually looking at.
 - No API exposes energy/valence/tempo. `inferProfile(genre, seed)` derives
   those axes from genre keywords — this is the input the mood engine scores on.
 - Track payloads embed the artist portrait; `mapDeezer` caches it in
@@ -192,11 +215,14 @@ runs full-screen on a phone from the home screen.
   `findSoundCloudFull` first, then `findAudiusFull`, then the `previewTrack`
   (30s) as the final fallback.
 - **Playability-aware matching.** `findSoundCloudTrack` walks its ranked
-  candidates with `resolveFullAudio(id, 'sc')` and returns the first one that
-  actually streams, because SoundCloud's official label uploads are
-  DRM-protected and never resolve. `resolveFullTrack` skips SoundCloud/BT
-  entirely when `hasAudioServer()` is false (the offline APK), going straight
-  to the YouTube IFrame player.
+  candidates and returns the first one that actually streams, because
+  SoundCloud's official label uploads are DRM-protected and never resolve.
+  Inside the Android shell the URL is signed in Java (cheap), so it walks the
+  list; through the companion server the top candidates are resolved in one
+  batch (`warmSoundCloudTracks` → `/api/sc-resolve`) rather than one yt-dlp
+  process each. `resolveFullTrack` skips SoundCloud/BT entirely when
+  `hasAudioServer()` is false (the offline APK), going straight to the YouTube
+  IFrame player.
 - **Prefetch + broadcast.** `prefetchFullTracks(list)` resolves full versions
   in the background (4 at a time); `upgradeToFullTrack` memoises results in
   `fullTrackCache` and fires `subscribeFullTracks` listeners. Search/Artist/

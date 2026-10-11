@@ -523,6 +523,8 @@ interface ServerSearchItem {
   channel?: string
   channelId?: string
   thumbnail?: string
+  /** Present when the server resolved the direct audio URL during the search. */
+  streamUrl?: string
 }
 
 /** Build a playable SoundCloud track. SoundCloud streams full-length audio
@@ -547,7 +549,7 @@ function buildSoundCloudTrack(i: ServerSearchItem): Track {
     bpm: profile.bpm,
     seed: profile.seed,
     source: 'soundcloud' as Source,
-    streamUrl: null,
+    streamUrl: i.streamUrl ?? null,
     artwork: i.thumbnail || null,
     streamable: true,
     preview: false,
@@ -624,6 +626,8 @@ export async function searchSoundCloud(query: string, limit = 25): Promise<Track
     }
   }
   const items = await serverSearch(query, limit, 'sc').catch(() => [])
+  // The server resolves the direct URL while searching, so these tracks play
+  // immediately instead of triggering a per-track yt-dlp lookup on click.
   return items.filter((i) => i.id && i.title).map(buildSoundCloudTrack)
 }
 
@@ -766,7 +770,7 @@ export function findSoundCloudFull(artist: string, title: string): Promise<Track
 }
 
 async function findSoundCloudTrack(artist: string, title: string): Promise<Track | null> {
-  const results = await searchSoundCloud(`${artist} ${title}`, 15).catch(() => [])
+  const results = await searchSoundCloud(`${artist} ${title}`, 4).catch(() => [])
   const wantTitle = cleanName(title)
   const wantArtist = cleanName(artist)
   // Reject anything that is not the studio song at roughly the album length —
@@ -793,13 +797,23 @@ async function findSoundCloudTrack(artist: string, title: string): Promise<Track
     .sort((a, b) => b.score - a.score)
 
   // SoundCloud's official label uploads are DRM-protected, so the best title
-  // match is often unplayable. When a server (or the Android bridge) is
-  // available, walk the ranked list and return the first upload that resolves.
-  if ((await hasAudioServer()) || hasNativeBridge()) {
-    const deadline = Date.now() + 12000
+  // match is often unplayable. Which candidates are playable depends on how the
+  // URL is obtained:
+  //  - inside the Android shell the URL is signed in Java, which is cheap, so
+  //    walking the ranked list is fine;
+  //  - through the companion server each check is a yt-dlp process, so the top
+  //    candidates are resolved in one batch instead of a walk of up to six.
+  if (hasNativeBridge()) {
     for (const { t } of scored.slice(0, 6)) {
       if (await resolveFullAudio(t.sourceId, 'sc')) return t
-      if (Date.now() > deadline) break
+    }
+    return null
+  }
+  if (await hasAudioServer()) {
+    const top = scored.slice(0, 6)
+    const playable = await warmSoundCloudTracks(top.map((s) => s.t))
+    for (const { t } of top) {
+      if (playable.has(t.sourceId)) return t
     }
     return null
   }
@@ -1006,7 +1020,15 @@ async function resolveFullTrack(track: Track): Promise<Track | null> {
  * swaps its previews in place and the first play starts full immediately.
  */
 export async function prefetchFullTracks(tracks: Track[], concurrency = 4): Promise<void> {
-  const previews = tracks.filter((t) => t.preview && (t.source === 'deezer' || t.source === 'itunes'))
+  // Only the first screenful is worth pre-resolving: playback is almost always
+  // started from the top of a list, and every extra SoundCloud lookup competes
+  // for the same serialised extractor queue.
+  const head = tracks.slice(0, 16)
+  const previews = head.filter((t) => t.preview && (t.source === 'deezer' || t.source === 'itunes'))
+  // Warm SoundCloud-backed tracks in one batch up front: the server resolves
+  // the whole batch in a single yt-dlp process, which is much cheaper than a
+  // process per track and makes each of them start instantly.
+  void warmSoundCloudTracks(head.filter((t) => t.source === 'soundcloud'))
   let cursor = 0
   const worker = async () => {
     while (cursor < previews.length) {
@@ -1084,6 +1106,23 @@ async function resolveViaServer(sourceId: string, src: 'yt' | 'sc'): Promise<str
     20000,
   )
   return data?.ok ? `${AUDIO_SERVER}/audio?src=${src}&id=${sourceId}` : null
+}
+
+/**
+ * Resolve many SoundCloud ids in one server round trip. Used to pre-warm a
+ * queue: the server runs a single yt-dlp process for the whole batch instead of
+ * one per track, so a queue of full songs is ready before it is played.
+ */
+export async function warmSoundCloudTracks(tracks: Track[]): Promise<Set<string>> {
+  if (!tracks.length || hasNativeBridge()) return new Set()
+  if (!(await hasAudioServer())) return new Set()
+  const ids = [...new Set(tracks.map((t) => t.sourceId).filter(Boolean))].slice(0, 12)
+  if (!ids.length) return new Set()
+  const data = await jsonFetch<{ ok?: Record<string, boolean> }>(
+    `${AUDIO_SERVER}/sc-resolve?ids=${ids.join(',')}`,
+    30000,
+  ).catch(() => null)
+  return new Set(Object.keys(data?.ok ?? {}))
 }
 
 /* ------------------------------------------------------------------ *
