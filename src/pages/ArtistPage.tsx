@@ -6,6 +6,7 @@ import { useStore } from '../store/useStore'
 import { Cover } from '../components/Cover'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { MediaCard } from '../components/MediaCard'
+import { ShareButton } from '../components/ShareButton'
 import { formatMonthlyLike } from '../lib/format'
 import { IconPlay, IconShuffle } from '../components/Icons'
 
@@ -91,6 +92,11 @@ export function ArtistPage() {
         <button className="icon-btn h-9 w-9" onClick={playShuffled} disabled={!tracks.length} aria-label="Перемешать">
           <IconShuffle width={22} height={22} />
         </button>
+        <ShareButton
+          kind="url"
+          url={`${window.location.origin}/artist/${encodeURIComponent(artistName)}`}
+          title={artistName}
+        />
       </div>
 
       <div className="px-4 sm:px-6">

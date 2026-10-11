@@ -178,13 +178,19 @@ export async function trackShareLink(track: Track): Promise<string> {
   return `${window.location.origin}/s/${payload}`
 }
 
+/**
+ * A shared list is capped: the payload rides in a URL, and some browsers and
+ * chat clients truncate very long links. 200 tracks is roughly 15 KB packed.
+ */
+const MAX_SHARED_TRACKS = 200
+
 export async function playlistShareLink(playlist: Playlist): Promise<string> {
   const payload = await encodeShare({
     v: 1,
     k: 'playlist',
     n: playlist.name,
     d: playlist.description,
-    ts: playlist.tracks.map(packTrack),
+    ts: playlist.tracks.slice(0, MAX_SHARED_TRACKS).map(packTrack),
   })
   return `${window.location.origin}/s/${payload}`
 }

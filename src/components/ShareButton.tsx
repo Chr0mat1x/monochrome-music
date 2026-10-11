@@ -6,17 +6,29 @@ import { IconCheck, IconLink } from './Icons'
 type Props =
   | { kind: 'track'; track: Track; className?: string; label?: string }
   | { kind: 'playlist'; playlist: Playlist; className?: string; label?: string }
+  | { kind: 'url'; url: string; title?: string; className?: string; label?: string }
 
 /** Copy a permanent share link to the clipboard, with a short "скопировано" state. */
 export function ShareButton(props: Props) {
   const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
 
   const share = async () => {
-    const url = props.kind === 'track' ? await trackShareLink(props.track) : await playlistShareLink(props.playlist)
+    const url =
+      props.kind === 'track'
+        ? await trackShareLink(props.track)
+        : props.kind === 'playlist'
+          ? await playlistShareLink(props.playlist)
+          : props.url
+    const title =
+      props.kind === 'track'
+        ? `${props.track.artist} — ${props.track.title}`
+        : props.kind === 'playlist'
+          ? props.playlist.name
+          : props.title
     // Prefer the native share sheet on phones; fall back to the clipboard.
-    if (props.kind === 'track' && navigator.share) {
+    if (navigator.share) {
       try {
-        await navigator.share({ title: `${props.track.artist} — ${props.track.title}`, url })
+        await navigator.share({ title, url })
         return
       } catch {
         /* the listener dismissed the sheet — fall through to copying */

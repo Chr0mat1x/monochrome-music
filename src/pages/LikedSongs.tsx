@@ -1,12 +1,14 @@
 import { useStore } from '../store/useStore'
 import { Cover } from '../components/Cover'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
+import { ShareButton } from '../components/ShareButton'
 import { IconHeart, IconPlay } from '../components/Icons'
 
 export function LikedSongs() {
   const liked = useStore((s) => s.liked)
   const playContext = useStore((s) => s.playContext)
   const toggleLike = useStore((s) => s.toggleLike)
+  const likedAsPlaylist = { id: 'liked', name: 'Избранное', description: 'Мои любимые треки', tracks: liked, cover: '', owned: true, createdAt: 0 }
 
   return (
     <div className="pb-10">
@@ -33,6 +35,7 @@ export function LikedSongs() {
         >
           <IconPlay width={22} height={22} />
         </button>
+        <ShareButton kind="playlist" playlist={likedAsPlaylist} />
       </div>
 
       <div className="px-2 sm:px-4">

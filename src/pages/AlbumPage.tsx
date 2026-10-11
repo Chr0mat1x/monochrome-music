@@ -5,6 +5,7 @@ import { getAlbum } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { Cover } from '../components/Cover'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
+import { ShareButton } from '../components/ShareButton'
 import { formatDuration, formatTotal } from '../lib/format'
 import { IconPlay, IconHeart } from '../components/Icons'
 import { NotFound } from './NotFound'
@@ -48,6 +49,7 @@ export function AlbumPage() {
   const total = tracks.reduce((sum, t) => sum + (t.duration || 0), 0)
   const allLiked = tracks.length > 0 && tracks.every((t) => liked.some((l) => l.id === t.id))
   const artwork = tracks.find((t) => t.artwork)?.artwork ?? null
+  const albumLink = `${window.location.origin}/album/${encodeURIComponent(`${artistName}::${albumTitle}`)}`
 
   return (
     <div className="pb-10">
@@ -87,6 +89,7 @@ export function AlbumPage() {
         >
           <IconHeart filled={allLiked} width={22} height={22} />
         </button>
+        <ShareButton kind="url" url={albumLink} title={`${artistName} — ${albumTitle}`} />
       </div>
 
       <div className="px-2 sm:px-4">
