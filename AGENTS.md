@@ -205,3 +205,12 @@ runs full-screen on a phone from the home screen.
 - **Artist completeness.** `getArtist` pulls Deezer `/top?limit=100` and
   `dedupeTracks` collapses live/remix/remaster editions to the studio original
   (`baseTitle`/`versionRank`); `ArtistPage` renders up to 50 rows.
+- **Artist genres.** Deezer returns no genres on its artist or top-tracks
+  endpoints, so `getArtist` reads the act's own genre from iTunes'
+  `entity=musicArtist` result (`itunesArtistGenre`). Only the track *title* is
+  inspected for a fallback guess — never the album name, which made every
+  Queen track read as jazz (their album "Jazz").
+- **Original recordings first.** `preferOriginals` drops lyric videos, covers,
+  karaoke and sped-up edits from search/Home/generator results, but keeps the
+  unfiltered list when fewer than 8 real songs remain (niche queries).
+
