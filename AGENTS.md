@@ -289,3 +289,14 @@ environment. The proxy then logs `yt-dlp not found` and every resolve fails.
 `scripts/dev.mjs` prepends `~/.local/bin` to the child PATH, and the server also
 falls back to `python3 -m yt_dlp`, so `npm run dev` works either way. If nothing
 plays after a rebuild, check `yt-dlp --version` first.
+
+## Permanent share links
+
+`src/lib/share.ts` packs a track (or a whole playlist) into a URL segment under
+`/s/<payload>`, opened by `src/pages/SharedPage.tsx`. The payload is
+`JSON → deflate-raw → base64url` and carries the track metadata — never a
+catalogue id and never a signed stream URL, both of which can expire or belong
+to someone else's account. That is what makes the link permanent: it rebuilds
+the same Track on any device, signed in or not. Keep new fields optional and
+tolerate unknown ones, so links created by an older build keep opening.
+`/playlist/<payload>` redirects to `/s/<payload>` for backwards compatibility.
