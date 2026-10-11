@@ -1024,7 +1024,7 @@ async function resolveFullTrack(track: Track): Promise<Track | null> {
     // an unrelated service and usually the only thing that can play here.
     const [sc, ytMatch] = await Promise.all([
       withDeadline(findSoundCloudFull(track.artist, track.title).catch(() => null), 2000),
-      server && !ytServerBlocked
+      server
         ? findYouTubeFull(track.artist, track.title).catch(() => null)
         : Promise.resolve(null),
     ])
@@ -1060,11 +1060,10 @@ async function resolveFullTrack(track: Track): Promise<Track | null> {
     }
   }
 
-  // YouTube refuses this machine's IP, so the IFrame player cannot help here
-  // either — it embeds from the same address. Give up immediately instead of
-  // starting a player that will fail seconds later, which is what made a
-  // missing full version feel like a long hang before the preview appeared.
-  if (server && ytServerBlocked) return null
+  // The companion server cannot hand out a direct YouTube stream, but the
+  // IFrame player embeds YouTube in the listener's own browser and streams
+  // from their IP, which is usually fine even when the server's IP is refused.
+  // So keep looking for a video id and let the player try.
 
   // No usable server. Search for the video id — that endpoint answers fine even
   // when extraction is refused — and let the IFrame player stream it from the
@@ -1147,6 +1146,9 @@ const resolveCache = new Map<string, Promise<string | null>>()
  * `src` is 'yt' (YouTube video id) or 'sc' (SoundCloud numeric track id).
  */
 export function resolveFullAudio(sourceId: string, src: 'yt' | 'sc' = 'yt'): Promise<string | null> {
+  // Once the server's IP is refused by YouTube, every further probe is a
+  // guaranteed failure that costs seconds. Skip straight to the IFrame player.
+  if (src === 'yt' && ytServerBlocked) return Promise.resolve(null)
   // In the Android shell the SoundCloud URL is signed in Java, because the
   // SoundCloud API refuses to answer the page directly (no CORS headers). The
   // signed URL expires, so it is deliberately not cached — it is re-signed on

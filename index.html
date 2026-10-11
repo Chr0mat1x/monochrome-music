@@ -25,6 +25,33 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Only a Vite dev server serves the app from /src/… modules. A service
+      // worker left over from an earlier build cached those modules and would
+      // keep serving stale JavaScript, which breaks playback while the page
+      // still renders. In dev, unregister any such worker and drop its caches
+      // once, then reload for a clean load. Production builds (APK, /assets/…)
+      // are left alone so the offline PWA shell keeps working.
+      (function () {
+        if (!('serviceWorker' in navigator)) return
+        var isDev = Array.prototype.some.call(
+          document.querySelectorAll('script[src]'),
+          function (s) { return s.getAttribute('src').indexOf('/src/') === 0 },
+        )
+        if (!isDev) return
+        if (sessionStorage.getItem('mono:sw-purged') === '1') return
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          var work = regs.map(function (r) { return r.unregister() })
+          if (window.caches) work.push(caches.keys().then(function (keys) {
+            return Promise.all(keys.map(function (k) { return caches.delete(k) }))
+          }))
+          return Promise.all(work)
+        }).then(function () {
+          sessionStorage.setItem('mono:sw-purged', '1')
+          if (navigator.serviceWorker.controller) location.reload()
+        }).catch(function () {})
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

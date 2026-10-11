@@ -1,8 +1,17 @@
 /* MONOCHROME service worker — app-shell caching so the phone can install and
  * reopen the UI offline. Audio (/api) and cross-origin API calls always go to
  * the network; this only caches the shell and hashed build assets. */
-const CACHE = 'monochrome-v1'
+const CACHE = 'monochrome-v2'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png']
+
+/**
+ * Only build output is worth caching: Vite emits content-hashed files under
+ * /assets/, so a stale entry can never shadow a newer build. Anything else —
+ * dev-server modules (/src/…, /@vite/…, /node_modules/…) and any un-hashed
+ * path — must go straight to the network, because caching it would pin an old
+ * module in place and leave the app serving stale code.
+ */
+const CACHEABLE = /^\/(assets\/|icon-|favicon-|apple-touch-icon|manifest\.webmanifest$)/
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -40,6 +49,8 @@ self.addEventListener('fetch', (event) => {
     )
     return
   }
+
+  if (!CACHEABLE.test(url.pathname)) return
 
   // Hashed assets: cache, then serve stale while revalidating.
   event.respondWith(
