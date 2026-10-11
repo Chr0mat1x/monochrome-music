@@ -14,6 +14,7 @@ import { Library } from './pages/Library'
 import { AlbumPage } from './pages/AlbumPage'
 import { ArtistPage } from './pages/ArtistPage'
 import { PlaylistPage } from './pages/PlaylistPage'
+import { SharedPage } from './pages/SharedPage'
 import { LikedSongs } from './pages/LikedSongs'
 import { NotFound } from './pages/NotFound'
 
@@ -73,6 +74,7 @@ export default function App() {
               <Route path="/album/:id" element={<AlbumPage />} />
               <Route path="/artist/:name" element={<ArtistPage />} />
               <Route path="/playlist/:id" element={<PlaylistPage />} />
+              <Route path="/s/:payload" element={<SharedPage />} />
               <Route path="/liked" element={<LikedSongs />} />
               <Route path="/auth" element={<AuthPanel />} />
               <Route path="/home" element={<Navigate to="/" replace />} />

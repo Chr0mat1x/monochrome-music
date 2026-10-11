@@ -4,7 +4,8 @@ import type { Track } from '../types'
 import { useStore } from '../store/useStore'
 import { downloadTrack } from '../lib/download'
 import { upgradeToFullTrack } from '../lib/musicApi'
-import { IconCheck, IconDownload, IconHeart, IconListPlus, IconPlus, IconQueue, IconTrash, IconWave } from './Icons'
+import { copyText, trackShareLink } from '../lib/share'
+import { IconCheck, IconDownload, IconHeart, IconLink, IconListPlus, IconPlus, IconQueue, IconTrash, IconWave } from './Icons'
 
 interface TrackMenuProps {
   track: Track
@@ -17,6 +18,7 @@ interface TrackMenuProps {
 export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
   const ref = useRef<HTMLDivElement | null>(null)
   const [subOpen, setSubOpen] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
   const playlists = useStore((s) => s.playlists)
   const liked = useStore((s) => s.liked.some((t) => t.id === track.id))
   const toggleLike = useStore((s) => s.toggleLike)
@@ -43,7 +45,7 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
 
   const ownedPlaylists = playlists.filter((p) => p.owned)
   const left = Math.min(x + 8, window.innerWidth - 240)
-  const top = Math.min(y + 4, window.innerHeight - 320)
+  const top = Math.min(y + 4, window.innerHeight - 380)
 
   return createPortal(
     <div
@@ -107,6 +109,18 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
           Слушать полную версию
         </button>
       )}
+
+      <button
+        className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
+        onClick={() => {
+          void trackShareLink(track).then((url) => copyText(url))
+          setLinkCopied(true)
+          window.setTimeout(() => setLinkCopied(false), 1500)
+        }}
+      >
+        {linkCopied ? <IconCheck width={16} height={16} /> : <IconLink width={16} height={16} />}
+        {linkCopied ? 'Ссылка скопирована' : 'Скопировать ссылку'}
+      </button>
 
       <button
         className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"

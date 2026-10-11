@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import { useStore } from '../store/useStore'
 import { Cover } from '../components/Cover'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
+import { ShareButton } from '../components/ShareButton'
 import { formatTotal } from '../lib/format'
+import { isSharePayload } from '../lib/share'
 import { IconPlay, IconTrash, IconHeart } from '../components/Icons'
 import { NotFound } from './NotFound'
 
@@ -19,6 +21,9 @@ export function PlaylistPage() {
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+
+  // A shared link can arrive on /playlist/<payload>; hand it to the share page.
+  if (isSharePayload(id)) return <Navigate to={`/s/${id}`} replace />
 
   if (!playlist) return <NotFound />
 
@@ -89,6 +94,7 @@ export function PlaylistPage() {
         <span className="icon-btn h-9 w-9" aria-hidden>
           <IconHeart filled={allLiked} width={20} height={20} />
         </span>
+        <ShareButton kind="playlist" playlist={playlist} />
         {playlist.owned && (
           <>
             <button

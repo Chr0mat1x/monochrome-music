@@ -105,3 +105,6 @@ export const IconDownload = (p: P) => (
 export const IconListPlus = (p: P) => (
   <svg {...base(p)}><path d="M4 6h11M4 12h11M4 18h7" /><path d="M18 12v7M14.5 15.5h7" /></svg>
 )
+export const IconLink = (p: P) => (
+  <svg {...base(p)}><path d="M10.5 13.5a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 0 0-5.7-5.7l-1.6 1.6" /><path d="M13.5 10.5a4 4 0 0 0-5.7 0L5 13.3a4 4 0 0 0 5.7 5.7l1.6-1.6" /></svg>
+)
