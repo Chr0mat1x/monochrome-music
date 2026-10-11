@@ -253,8 +253,10 @@ function mapDeezer(t: any): Track | null {
 }
 
 /** Deezer only returns genre_id on some endpoints; guess otherwise. */
+// Fallback genre guess. Only the *title* is inspected, never the album name:
+// Queen's "Jazz" album made every one of their tracks read as jazz.
 function inferGenreFromContext(t: any): string {
-  const hay = `${t.title} ${t.album?.title ?? ''}`.toLowerCase()
+  const hay = String(t.title ?? '').toLowerCase()
   const guess = GENRE_PROFILES.find((p) => p.keys.some((k) => hay.includes(k)))
   return guess && guess.keys[0] ? guess.keys[0] : ''
 }
@@ -410,6 +412,21 @@ export async function searchItunes(term: string, limit = 25): Promise<Track[]> {
   if (!term.trim()) return []
   const data = await jsonFetch<{ results: any[] }>(`${ITUNES}/search?term=${encodeURIComponent(term)}&entity=song&limit=${limit}`)
   return (data?.results ?? []).map(mapItunes).filter(Boolean) as Track[]
+}
+
+/**
+ * The artist's own genre, straight from iTunes. Deezer omits genres on both
+ * the artist and the top-tracks endpoints, so deriving it from tracks left
+ * well-known acts mislabelled; iTunes ranks the popular act first and carries
+ * a reliable primary genre.
+ */
+export async function itunesArtistGenre(name: string): Promise<string | null> {
+  const data = await jsonFetch<{ results: any[] }>(
+    `${ITUNES}/search?term=${encodeURIComponent(name)}&entity=musicArtist&limit=10`,
+  )
+  const want = cleanName(name)
+  const match = (data?.results ?? []).find((r) => cleanName(r.artistName ?? '') === want)
+  return match?.primaryGenreName || null
 }
 
 /* ------------------------------------------------------------------ *
@@ -1081,10 +1098,15 @@ export async function getArtist(name: string): Promise<{ artist: Artist; tracks:
   }
   if (!picture) picture = pool.find((t) => t.artwork)?.artwork ?? null
 
+  // iTunes names the act's own genre; Deezer tracks are a last resort.
+  const itunesGenre = await itunesArtistGenre(name).catch(() => null)
+  const trackGenres = Array.from(new Set(pool.map((t) => t.genre).filter(Boolean)))
+  const genres = (itunesGenre && itunesGenre !== 'Music' ? [itunesGenre] : trackGenres).slice(0, 3)
+
   const artist: Artist = {
     id: info?.id ? `ar-dz-${info.id}` : `ar-${hash(name)}`,
     name,
-    genres: Array.from(new Set(pool.map((t) => t.genre).filter(Boolean))).slice(0, 3),
+    genres: genres,
     bio: `${titleCase(name)} — реальный артист из каталогов Deezer, iTunes и Audius. Здесь собраны доступные треки и релизы, найденные вживую по запросу.`,
     monthly: info?.fans && info.fans > 0 ? info.fans : 100_000 + (hash(name) % 4_000_000),
     picture,
