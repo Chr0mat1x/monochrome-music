@@ -374,3 +374,32 @@ it out as the primary link. Push the branch with the token inline
 (`https://Chr0mat1x:$GITHUB_TOKEN@github.com/...`) — the sandbox git has no
 credential helper and otherwise blocks on a username prompt.
 
+
+## SoundCloud playability (the "ничего не играет" trap)
+
+What an anonymous listener can stream from SoundCloud is decided by `policy`:
+
+* `ALLOW`  → full-length progressive MP3, plays anywhere. **This is the goal.**
+* `SNIP`   → the rights holder allows only a 30-second clip. Playable, but flag
+  it `preview: true` so the UI says "ПРЕВЬЮ 30С".
+* `MONETIZE` → no anonymous progressive stream at all; the signed endpoint
+  404s. These must be **filtered out of search**, or every tap on them fails.
+
+Two mistakes caused a total playback outage and are worth not repeating:
+
+1. **Resolution went through yt-dlp.** On a datacenter IP yt-dlp gets burst
+   403s from SoundCloud, and the 403 branch set `scBlockedUntil = now + 60s`
+   for the *whole* catalogue — so one refusal silenced every later track.
+   Resolution now uses `api-v2.soundcloud.com` with a scraped `client_id`
+   (`scGetClientId`/`extractScViaApi`), which answers in ~0.3s and reports a
+   dead upload per-track instead of globally. yt-dlp is only the fallback when
+   the API layer itself fails (`scApiBrokenUntil`). The Android bridge always
+   used this path.
+2. **Search never asked SoundCloud.** `searchAll(q, 40)` defaulted to
+   `soundcloud = false`, so the results were Deezer/iTunes 30s previews plus
+   YouTube — nothing full-length. Search/Generate/Wave now pass `true`.
+
+If playback breaks again, check in this order: does `/api/search?src=sc&q=…`
+return items, does `/api/resolve?src=sc&id=…` return `{"ok":true}`, and does
+`policy` filtering still match SoundCloud's current vocabulary.
+
