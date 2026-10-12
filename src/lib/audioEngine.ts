@@ -1,5 +1,5 @@
 import type { Track } from '../types'
-import { resolveAudiusStream, resolveDeezerStream, resolveFullAudio } from './musicApi'
+import { resolveAudiusStream, resolveDeezerStream, resolveFullAudio, resolveMediaUrl } from './musicApi'
 import { loadYouTubeApi } from './youtube'
 
 type YTPlayer = {
@@ -198,6 +198,7 @@ export class AudioEngine {
     // A SoundCloud track that already carries its URL (resolved during the
     // search) plays without another round trip to the extractor.
     if (track.source === 'soundcloud') return track.streamUrl ?? resolveFullAudio(track.sourceId, 'sc')
+    if (track.source === 'itunes') return resolveMediaUrl(track.streamUrl)
     return track.streamUrl
   }
 

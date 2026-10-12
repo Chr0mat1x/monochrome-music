@@ -324,4 +324,22 @@ tolerate unknown ones, so links created by an older build keep opening.
   Instant Crush ft. Julian Casablancas (Official)". `cleanName` strips
   `feat/ft/featuring` and everything after it (`stripFeat`); without it the
   correct upload never matched and the track silently fell back to a preview.
+* **The listener's network may block every catalogue, so the server proxies them.**
+  Russia, for one, blocks Deezer, iTunes and Audius, and SoundCloud's CDN — none
+  of the "live search" sources are reachable from the browser there, so the app
+  plays nothing without a VPN. The server (unfiltered) now fetches them:
+  `/api/proxy` streams an allow-listed URL (metadata + audio bytes, with range
+  support), and `/api/audio-url` validates an Audius redirect and returns a
+  proxied URL. The client routes every Deezer/iTunes/Audius call through
+  `catalogueProxied()`/`proxied()` when the server is reachable. Do not widen
+  `CATALOG_HOSTS` carelessly — the endpoint is only safe because it refuses
+  anything not on the list.
+* **The proxy must ask for `accept-encoding: identity`.** Node transparently
+  gunzips an upstream body, so forwarding the *compressed* `content-length`
+  truncates the JSON. The header keeps the body uncompressed and the length
+  truthful.
+* **The APK has no server of its own.** Point it at a deployment with
+  `VITE_MONO_SERVER=https://…/api` at build time (`npm run build:apk`), otherwise
+  a phone on a blocking network has nothing to play. That is why the server
+  sends CORS headers on every response.
 

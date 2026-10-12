@@ -57,6 +57,40 @@ async function jsonFetch<T = any>(url: string, timeout = 12000): Promise<T | nul
 }
 
 /**
+ * Where catalogue and media requests should go. When the companion server is
+ * reachable, Deezer/iTunes/Audius are fetched *through* it: the server has
+ * unfiltered access, while the listener's own network may block those hosts
+ * entirely (Russia blocks all three). Falls back to the browser's direct
+ * fetch when no server is present, e.g. the bundled APK.
+ */
+const CATALOG_VIA_PROXY = true
+let proxyMode: Promise<boolean> | null = null
+export function catalogueProxied(): Promise<boolean> {
+  if (!proxyMode) proxyMode = CATALOG_VIA_PROXY ? hasAudioServer() : Promise.resolve(false)
+  return proxyMode
+}
+
+function proxied(url: string): string {
+  return `${AUDIO_SERVER}/proxy?url=${encodeURIComponent(url)}`
+}
+
+/**
+ * Deezer's REST API sends no CORS headers, so browser fetch() is blocked. It
+ * does support JSONP, which sidesteps CORS entirely. Through the companion
+ * server neither problem exists, so a plain fetch is used instead — that path
+ * also works in regions where Deezer is unreachable directly.
+ */
+async function deezerJson<T = any>(url: string): Promise<T | null> {
+  if (await catalogueProxied()) return jsonFetch<T>(proxied(url))
+  return jsonp<T>(url)
+}
+
+async function catalogueJson<T = any>(url: string, timeout = 12000): Promise<T | null> {
+  if (await catalogueProxied()) return jsonFetch<T>(proxied(url), timeout)
+  return jsonFetch<T>(url, timeout)
+}
+
+/**
  * The Deezer REST API does not send CORS headers, so browser fetch() is
  * blocked. It does support JSONP, which sidesteps CORS entirely. We only use
  * this for Deezer; everything else goes through fetch().
@@ -89,7 +123,7 @@ function jsonp<T = any>(url: string, timeout = 12000): Promise<T | null> {
 let audiusHostPromise: Promise<string> | null = null
 async function audiusHost(): Promise<string> {
   if (!audiusHostPromise) {
-    audiusHostPromise = jsonFetch<{ data: string[] }>('https://api.audius.co/')
+    audiusHostPromise = catalogueJson<{ data: string[] }>('https://api.audius.co/')
       .then((d) => (Array.isArray(d?.data) && d.data[0]) || AUDIUS_FALLBACK)
       .catch(() => AUDIUS_FALLBACK)
   }
@@ -264,22 +298,22 @@ function inferGenreFromContext(t: any): string {
 
 export async function searchDeezer(term: string, limit = 25): Promise<Track[]> {
   if (!term.trim()) return []
-  const data = await jsonp<{ data: any[] }>(`${DEEZER}/search/track?q=${encodeURIComponent(term)}&limit=${limit}`)
+  const data = await deezerJson<{ data: any[] }>(`${DEEZER}/search/track?q=${encodeURIComponent(term)}&limit=${limit}`)
   return (data?.data ?? []).map(mapDeezer).filter(Boolean) as Track[]
 }
 
 export async function deezerTopTracks(artistId: string, limit = 50): Promise<Track[]> {
-  const data = await jsonp<{ data: any[] }>(`${DEEZER}/artist/${artistId}/top?limit=${limit}`)
+  const data = await deezerJson<{ data: any[] }>(`${DEEZER}/artist/${artistId}/top?limit=${limit}`)
   return (data?.data ?? []).map(mapDeezer).filter(Boolean) as Track[]
 }
 
 export async function deezerAlbumTracks(albumId: string): Promise<Track[]> {
-  const data = await jsonp<{ data: any[] }>(`${DEEZER}/album/${albumId}/tracks?limit=100`)
+  const data = await deezerJson<{ data: any[] }>(`${DEEZER}/album/${albumId}/tracks?limit=100`)
   return (data?.data ?? []).map(mapDeezer).filter(Boolean) as Track[]
 }
 
 export async function deezerChart(limit = 25): Promise<Track[]> {
-  const data = await jsonp<{ data: any[] }>(`${DEEZER}/chart/0/tracks?limit=${limit}`)
+  const data = await deezerJson<{ data: any[] }>(`${DEEZER}/chart/0/tracks?limit=${limit}`)
   return (data?.data ?? []).map(mapDeezer).filter(Boolean) as Track[]
 }
 
@@ -297,7 +331,7 @@ export async function deezerArtistInfo(name: string): Promise<DeezerArtistInfo |
   // artists with a few hundred fans. Fetch a page of candidates and pick the
   // exact-name match with the largest audience, so the artist page lands on
   // the act the listener actually meant.
-  const data = await jsonp<{ data: any[] }>(
+  const data = await deezerJson<{ data: any[] }>(
     `${DEEZER}/search/artist?q=${encodeURIComponent(name)}&limit=25`,
   )
   const candidates: any[] = data?.data ?? []
@@ -330,7 +364,7 @@ export interface DeezerAlbumInfo {
  */
 export async function deezerFindAlbum(artistName: string, albumTitle: string): Promise<{ info: DeezerAlbumInfo; tracks: Track[] } | null> {
   const q = `${artistName} ${albumTitle}`.trim()
-  const data = await jsonp<{ data: any[] }>(`${DEEZER}/search/album?q=${encodeURIComponent(q)}&limit=8`)
+  const data = await deezerJson<{ data: any[] }>(`${DEEZER}/search/album?q=${encodeURIComponent(q)}&limit=8`)
   const wanted = albumTitle.toLowerCase()
   const candidate =
     (data?.data ?? []).find((a) => a?.title && a.title.toLowerCase() === wanted) ??
@@ -340,7 +374,7 @@ export async function deezerFindAlbum(artistName: string, albumTitle: string): P
   // the search payload omits release_date; the album detail endpoint has it
   const [tracks, detail] = await Promise.all([
     deezerAlbumTracks(id),
-    jsonp<{ release_date?: string; cover_xl?: string; cover_big?: string; record_type?: string }>(`${DEEZER}/album/${id}`),
+    deezerJson<{ release_date?: string; cover_xl?: string; cover_big?: string; record_type?: string }>(`${DEEZER}/album/${id}`),
   ])
   return {
     info: {
@@ -361,7 +395,7 @@ export async function deezerFindAlbum(artistName: string, albumTitle: string): P
 }
 
 export async function deezerArtistAlbums(artistId: string, limit = 50): Promise<DeezerAlbumInfo[]> {
-  const data = await jsonp<{ data: any[] }>(`${DEEZER}/artist/${artistId}/albums?limit=${limit}`)
+  const data = await deezerJson<{ data: any[] }>(`${DEEZER}/artist/${artistId}/albums?limit=${limit}`)
   return (data?.data ?? [])
     .filter((a) => a?.title)
     .map((a) => ({
@@ -375,8 +409,20 @@ export async function deezerArtistAlbums(artistId: string, limit = 50): Promise<
 
 /** Resolve the (signed, expiring) Deezer preview URL at play time. */
 export async function resolveDeezerStream(trackId: string): Promise<string | null> {
-  const data = await jsonp<{ preview?: string }>(`${DEEZER}/track/${trackId}`)
-  return data?.preview ?? null
+  const data = await deezerJson<{ preview?: string }>(`${DEEZER}/track/${trackId}`)
+  return resolveMediaUrl(data?.preview ?? null)
+}
+
+/**
+ * Wrap a direct media URL so its bytes are fetched through the companion
+ * server. The 30-second commercial previews live on CDNs that are also blocked
+ * in some regions, so the request has to originate from a machine that can
+ * reach them.
+ */
+export async function resolveMediaUrl(direct: string | null): Promise<string | null> {
+  if (!direct) return null
+  if (!(await catalogueProxied())) return direct
+  return proxied(direct)
 }
 
 /* ------------------------------------------------------------------ *
@@ -411,7 +457,7 @@ function mapItunes(r: any): Track | null {
 
 export async function searchItunes(term: string, limit = 25): Promise<Track[]> {
   if (!term.trim()) return []
-  const data = await jsonFetch<{ results: any[] }>(`${ITUNES}/search?term=${encodeURIComponent(term)}&entity=song&limit=${limit}`)
+  const data = await catalogueJson<{ results: any[] }>(`${ITUNES}/search?term=${encodeURIComponent(term)}&entity=song&limit=${limit}`)
   return (data?.results ?? []).map(mapItunes).filter(Boolean) as Track[]
 }
 
@@ -422,7 +468,7 @@ export async function searchItunes(term: string, limit = 25): Promise<Track[]> {
  * a reliable primary genre.
  */
 export async function itunesArtistGenre(name: string): Promise<string | null> {
-  const data = await jsonFetch<{ results: any[] }>(
+  const data = await catalogueJson<{ results: any[] }>(
     `${ITUNES}/search?term=${encodeURIComponent(name)}&entity=musicArtist&limit=10`,
   )
   const want = cleanName(name)
@@ -470,21 +516,29 @@ function mapAudius(t: any): Track | null {
 export async function searchAudius(query: string, limit = 25): Promise<Track[]> {
   if (!query.trim()) return []
   const host = await audiusHost()
-  const data = await jsonFetch<{ data: any[] }>(`${host}/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}&app_name=${APP_NAME}`)
+  const data = await catalogueJson<{ data: any[] }>(`${host}/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}&app_name=${APP_NAME}`)
   return (data?.data ?? []).map(mapAudius).filter(Boolean) as Track[]
 }
 
 export async function audiusTrending(limit = 25, genre = ''): Promise<Track[]> {
   const host = await audiusHost()
-  const data = await jsonFetch<{ data: any[] }>(
+  const data = await catalogueJson<{ data: any[] }>(
     `${host}/v1/tracks/trending?limit=${limit}&app_name=${APP_NAME}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`,
   )
   return (data?.data ?? []).map(mapAudius).filter(Boolean) as Track[]
 }
 
+/**
+ * Audius stream URLs redirect to a rotating content node, which a region that
+ * blocks Audius cannot reach. Asking the server to validate the redirect and
+ * hand back a proxied URL keeps full Audius playback working there.
+ */
 export async function resolveAudiusStream(trackId: string): Promise<string | null> {
   const host = await audiusHost()
-  return `${host}/v1/tracks/${trackId}/stream?app_name=${APP_NAME}`
+  const direct = `${host}/v1/tracks/${trackId}/stream?app_name=${APP_NAME}`
+  if (!(await catalogueProxied())) return direct
+  const data = await jsonFetch<{ url?: string }>(`${AUDIO_SERVER}/audio-url?url=${encodeURIComponent(direct)}`, 9000)
+  return data?.url ?? null
 }
 
 /* ------------------------------------------------------------------ *
@@ -607,8 +661,13 @@ async function searchYouTubeServer(query: string, limit: number): Promise<Track[
 
 export async function searchSoundCloud(query: string, limit = 25): Promise<Track[]> {
   if (!query.trim()) return []
-  // The Android shell can query SoundCloud from Java, which is the only way to
-  // search it without the companion server (the API sends no CORS headers).
+  // Prefer the server: it can reach SoundCloud where the device cannot, and it
+  // resolves the direct URL while searching. The native bridge (Java) is the
+  // offline fallback for the APK when no server is configured.
+  if (await hasAudioServer()) {
+    const items = await serverSearch(query, limit, 'sc').catch(() => [])
+    if (items.length) return items.filter((i) => i.id && i.title).map(buildSoundCloudTrack)
+  }
   if (hasNativeBridge()) {
     const native = await nativeSearchSoundCloud(query)
     if (native.length) {
@@ -625,10 +684,7 @@ export async function searchSoundCloud(query: string, limit = 25): Promise<Track
         )
     }
   }
-  const items = await serverSearch(query, limit, 'sc').catch(() => [])
-  // The server resolves the direct URL while searching, so these tracks play
-  // immediately instead of triggering a per-track yt-dlp lookup on click.
-  return items.filter((i) => i.id && i.title).map(buildSoundCloudTrack)
+  return []
 }
 
 export async function searchYouTube(query: string, limit = 25): Promise<Track[]> {
@@ -1130,7 +1186,14 @@ export async function prefetchFullTracks(tracks: Track[], concurrency = 2): Prom
  * the audio directly through the Web Audio graph; otherwise we fall back to
  * the official IFrame player (which works from residential IPs).
  * ------------------------------------------------------------------ */
-const AUDIO_SERVER = '/api'
+/**
+ * Base URL of the companion server. On the web it is a same-origin `/api`
+ * (Vite proxies it in dev). The bundled Android app has no server of its own,
+ * so it is pointed at a real deployment through `VITE_MONO_SERVER` at build
+ * time — without that, a phone on a network that blocks SoundCloud and the
+ * catalogues has nothing to play at all.
+ */
+const AUDIO_SERVER = (import.meta.env.VITE_MONO_SERVER as string | undefined)?.replace(/\/$/, '') || '/api'
 
 let audioServerUp: boolean | null = null
 let audioServerProbe: Promise<boolean> | null = null
@@ -1165,15 +1228,13 @@ export function resolveFullAudio(sourceId: string, src: 'yt' | 'sc' = 'yt'): Pro
   // Once the server's IP is refused by YouTube, every further probe is a
   // guaranteed failure that costs seconds. Skip straight to the IFrame player.
   if (src === 'yt' && ytServerBlocked) return Promise.resolve(null)
-  // In the Android shell the SoundCloud URL is signed in Java, because the
-  // SoundCloud API refuses to answer the page directly (no CORS headers). The
-  // signed URL expires, so it is deliberately not cached — it is re-signed on
-  // every load, which is cheap.
-  if (src === 'sc' && hasNativeBridge()) {
-    return nativeResolveSoundCloud(sourceId).then(async (native) => {
-      if (native) return native
-      if (!(await hasAudioServer())) return null
-      return resolveViaServer(sourceId, src)
+  // The server signs *and* proxies SoundCloud audio, so it plays even where
+  // SoundCloud's CDN is blocked; the native bridge can only hand back a direct
+  // CDN URL, which such a network cannot reach. Prefer the server when present.
+  if (hasNativeBridge()) {
+    return hasAudioServer().then((up) => {
+      if (up) return resolveViaServer(sourceId, src)
+      return nativeResolveSoundCloud(sourceId).catch(() => null)
     })
   }
   const key = `${src}:${sourceId}`

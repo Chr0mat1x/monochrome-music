@@ -76,6 +76,37 @@ async function ytdlp(args) {
 /** Cache of resolved direct URLs: videoId → { url, expires }. */
 const urlCache = new Map()
 const URL_TTL = 20 * 60 * 1000
+
+/**
+ * Catalogue hosts this server is allowed to proxy. The browser in some regions
+ * (Russia, for one) cannot reach Deezer, iTunes or Audius at all, while this
+ * machine can — so metadata and audio for those sources are fetched here and
+ * streamed back. Only these exact hosts are accepted, never an arbitrary URL,
+ * so the endpoint cannot be used as an open proxy.
+ */
+const CATALOG_HOSTS = new Set([
+  'api.deezer.com',
+  'itunes.apple.com',
+  'audio-ssl.itunes.apple.com',
+  'api.audius.co',
+  'discoveryprovider.audius.co',
+])
+/** Audius content nodes serve the actual audio; their hostnames vary, so match
+ * the suffixes the network uses rather than an exhaustive list. */
+const AUDIUS_MEDIA_SUFFIXES = ['.audius.co', '.staked.cloud', '.figment.io', '.theblueprint.xyz', '.monophonic.digital', '.rickyrombo.com', '.open-audio-validator.com']
+
+function isAllowedProxyUrl(raw) {
+  let u
+  try {
+    u = new URL(raw)
+  } catch {
+    return false
+  }
+  if (u.protocol !== 'https:') return false
+  if (CATALOG_HOSTS.has(u.hostname)) return true
+  return AUDIUS_MEDIA_SUFFIXES.some((s) => u.hostname.endsWith(s))
+}
+
 // A progressive HTTP MP3 is the only thing a browser <audio> element can stream
 // here: SoundCloud's other formats are HLS manifests it cannot play. The
 // `format_id!*=preview` guard matters more than it looks — SoundCloud hands out
@@ -425,6 +456,40 @@ async function handleResolve(res, id, source) {
   }
 }
 
+/**
+ * Proxy an allow-listed catalogue/media URL. Some regions (Russia, for one)
+ * cannot reach Deezer, iTunes or Audius directly, but this machine can, so the
+ * browser asks here instead. Byte ranges are forwarded so audio can seek, and
+ * CORS is opened up because the Android shell and any other origin may call it.
+ */
+async function handleProxy(req, res, target, raw) {
+  if (!target || !isAllowedProxyUrl(target)) {
+    res.writeHead(400, { 'content-type': 'text/plain' }).end('url not allowed')
+    return
+  }
+  const headers = { 'accept-encoding': 'identity' }
+  if (raw) headers.range = raw
+  const upstream = await fetch(target, { headers, redirect: 'follow' }).catch(() => null)
+  if (!upstream || !upstream.ok || !upstream.body) {
+    res.writeHead(upstream ? upstream.status : 502, { 'content-type': 'text/plain' }).end('upstream failed')
+    return
+  }
+  const out = {
+    'access-control-allow-origin': '*',
+    'cache-control': 'public, max-age=300',
+  }
+  // `accept-encoding: identity` keeps the upstream body uncompressed, so its
+  // content-length still describes the bytes being forwarded. Without it Node
+  // transparently gunzips while the compressed length is passed on, and the
+  // client truncates the JSON.
+  for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
+    const v = upstream.headers.get(h)
+    if (v) out[h] = v
+  }
+  res.writeHead(upstream.status, out)
+  Readable.fromWeb(upstream.body).pipe(res)
+}
+
 /** Search through a yt-dlp provider, returning a normalised item list. */
 async function ytdlpSearch(prefix, query, n) {
   const out = await ytdlp(['--no-warnings', '--flat-playlist', '-j', `${prefix}${n}:${query}`])
@@ -546,6 +611,15 @@ function bearer(req) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`)
+  // The bundled Android app (and any other origin) calls this server directly
+  // with a full URL, so every response has to be CORS-readable.
+  res.setHeader('access-control-allow-origin', '*')
+  res.setHeader('access-control-allow-headers', 'range,content-type')
+  res.setHeader('access-control-expose-headers', 'content-length,content-range,accept-ranges')
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204).end()
+    return
+  }
   if (url.pathname !== '/api/health') {
     console.log(`[monochrome] ${req.method} ${url.pathname}${url.search}`)
   }
@@ -637,6 +711,25 @@ const server = createServer(async (req, res) => {
     // whole extraction. That keeps a list upgrade from stalling the UI.
     void scResolveMany(ids).catch(() => {})
     json(res, 202, { accepted: ids.length })
+    return
+  }
+  if (url.pathname === '/api/proxy') {
+    await handleProxy(
+      req,
+      res,
+      url.searchParams.get('url') || '',
+      req.headers.range,
+    )
+    return
+  }
+  if (url.pathname === '/api/audio-url') {
+    const target = url.searchParams.get('url') || ''
+    const meta = await fetch(target, { redirect: 'follow' }).catch(() => null)
+    if (!target || !isAllowedProxyUrl(target) || !meta || !meta.ok) {
+      json(res, 400, { error: 'not allowed' })
+      return
+    }
+    json(res, 200, { url: `/api/proxy?url=${encodeURIComponent(target)}` })
     return
   }
   if (url.pathname === '/api/search') {
