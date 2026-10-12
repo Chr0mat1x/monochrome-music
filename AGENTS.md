@@ -356,3 +356,21 @@ tolerate unknown ones, so links created by an older build keep opening.
   a phone on a blocking network has nothing to play. That is why the server
   sends CORS headers on every response.
 
+
+## Release / hosting
+
+Permanent download link comes from GitHub Releases, not from the sandbox:
+
+```
+git push origin master:main
+gh release create v1.0 downloads/MONOCHROME.apk --repo Chr0mat1x/monochrome-music \
+  --title "MONOCHROME 1.0" --notes "…"
+```
+
+The asset URL `https://github.com/Chr0mat1x/monochrome-music/releases/latest/download/MONOCHROME.apk`
+is stable — bump the tag, not the filename, and re-upload the APK. The sandbox
+link (`https://work-*/…/MONOCHROME.apk`) dies with the container, so never hand
+it out as the primary link. Push the branch with the token inline
+(`https://Chr0mat1x:$GITHUB_TOKEN@github.com/...`) — the sandbox git has no
+credential helper and otherwise blocks on a username prompt.
+
