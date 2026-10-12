@@ -648,8 +648,23 @@ export async function searchYouTube(query: string, limit = 25): Promise<Track[]>
   return []
 }
 
+/**
+ * Drop a featured-artist credit ("feat.", "ft.", "featuring") and everything
+ * after it. Catalogues and uploads credit features differently — Deezer says
+ * "Instant Crush (feat. Julian Casablancas)" while SoundCloud says
+ * "Daft Punk - Instant Crush ft. Julian Casablancas (Official)" — so without
+ * this the correct upload never matches and the track falls back to a preview.
+ */
+const stripFeat = (s: string) => s.replace(/\b(?:feat|featuring|ft)\b.*$/i, '').trim()
+
 const cleanName = (s: string) =>
-  s.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\s+/g, ' ').trim()
+  stripFeat(
+    s
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N} ]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+  )
 
 /** Rank YouTube results for a track, best match first. */
 function rankYouTube(results: Track[], artist: string, title: string): Track[] {
@@ -1017,17 +1032,18 @@ async function resolveFullTrack(track: Track): Promise<Track | null> {
 
   if (hasResolver) {
     // SoundCloud gives a real file the <audio> element can stream, which keeps
-    // the visualiser working, so it is tried first — but on a deadline. It
-    // rarely has mainstream songs, and waiting seconds to find that out is what
-    // made full versions feel slow; YouTube's match is the fast, reliable path.
-    // SoundCloud is always attempted, even once YouTube has refused us: it is
-    // an unrelated service and usually the only thing that can play here.
-    const [sc, ytMatch] = await Promise.all([
-      withDeadline(findSoundCloudFull(track.artist, track.title).catch(() => null), 2000),
-      server
-        ? findYouTubeFull(track.artist, track.title).catch(() => null)
-        : Promise.resolve(null),
-    ])
+    // the visualiser working, so it is tried first. Its lookup is not instant:
+    // a flat search is ~1.5s and resolving a candidate's signed URL is ~2s on a
+    // cold cache. It is also memoised, so the wait is paid once per track.
+    const scMatch = findSoundCloudFull(track.artist, track.title).catch(() => null)
+    const ytMatch = server
+      ? await findYouTubeFull(track.artist, track.title).catch(() => null)
+      : null
+    // When YouTube can serve as a fallback, cap the SoundCloud wait so a track
+    // it does not have does not stall playback. When YouTube has no match,
+    // SoundCloud is the only playable source here, so wait for it in full
+    // rather than timing out and dropping the listener to a 30s preview.
+    const sc = ytMatch ? await withDeadline(scMatch, 8000) : await scMatch
     if (sc) {
       // `findSoundCloudFull` only returns a hit whose URL the server already
       // resolved, so there is nothing to wait for here.

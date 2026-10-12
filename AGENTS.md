@@ -312,4 +312,16 @@ tolerate unknown ones, so links created by an older build keep opening.
   YouTube in the listener's own browser and streams from *their* IP. Never let
   `ytServerBlocked` stop a track from reaching the IFrame player — doing so
   turns every mainstream track into a 30-second preview.
+* **The SoundCloud match deadline must clear a real extraction.** `resolveFullTrack`
+  caps the SoundCloud lookup with `withDeadline(…, 8000)`. A flat search is
+  ~1.5s and resolving a candidate's signed URL is ~2s cold, so the old 2s
+  cut-off dropped the good match a few hundred ms before it landed and fell
+  through to a YouTube id the datacenter IP cannot play — every mainstream track
+  ended as a 30-second preview. When YouTube has *no* match, the wait is
+  unbounded: SoundCloud is then the only playable source here.
+* **Catalogue and uploads credit features differently.** Deezer says
+  "Instant Crush (feat. Julian Casablancas)", SoundCloud says "Daft Punk -
+  Instant Crush ft. Julian Casablancas (Official)". `cleanName` strips
+  `feat/ft/featuring` and everything after it (`stripFeat`); without it the
+  correct upload never matched and the track silently fell back to a preview.
 
