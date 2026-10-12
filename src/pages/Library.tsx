@@ -71,10 +71,9 @@ export function Library() {
 
       {tab === 'playlists' && (
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {playlists.map((p, i) => (
+          {playlists.map((p) => (
             <MediaCard
               key={p.id}
-              index={i}
               to={`/playlist/${p.id}`}
               seed={p.id + p.name}
               artwork={p.tracks.find((t) => t.artwork)?.artwork ?? null}

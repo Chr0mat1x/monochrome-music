@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import type { Track } from '../types'
-import { useReveal } from '../lib/useReveal'
 import { Cover } from './Cover'
 import { IconPause, IconPlay } from './Icons'
 import { useStore } from '../store/useStore'
@@ -16,15 +15,12 @@ interface MediaCardProps {
   context?: Track[]
   badge?: ReactNode
   circle?: boolean
-  /** Position in its grid, used to stagger the reveal animation. */
-  index?: number
 }
 
-export function MediaCard({ to, seed, artwork, tone = 40, title, subtitle, context, badge, circle = false, index = 0 }: MediaCardProps) {
+export function MediaCard({ to, seed, artwork, tone = 40, title, subtitle, context, badge, circle = false }: MediaCardProps) {
   const playContext = useStore((s) => s.playContext)
   const currentId = useStore((s) => s.currentTrack?.id ?? null)
   const playing = useStore((s) => s.playing)
-  const ref = useReveal<HTMLAnchorElement>(index)
 
   const containsCurrent = Boolean(context?.some((t) => t.id === currentId))
   const showPause = containsCurrent && playing
@@ -36,24 +32,20 @@ export function MediaCard({ to, seed, artwork, tone = 40, title, subtitle, conte
   }
 
   return (
-    <Link
-      ref={ref}
-      to={to}
-      className="reveal group relative flex flex-col gap-3 rounded-lg bg-ink-10 p-3 transition-colors duration-300 hover:bg-ink-20"
-    >
+    <Link to={to} className="group relative flex flex-col gap-3 rounded-lg bg-ink-10 p-3 transition-colors duration-300 hover:bg-ink-20">
       <div className="relative">
         <Cover
           seed={seed}
           artwork={artwork}
           tone={tone}
           rounded={circle ? 'rounded-full' : 'rounded-md'}
-          className="aspect-square w-full shadow-lg shadow-black/40 transition-transform duration-500 ease-out group-hover:-translate-y-1 group-hover:scale-[1.02]"
+          className="aspect-square w-full shadow-lg shadow-black/40"
           alt={title}
         />
         {context && context.length > 0 && (
           <button
             onClick={handlePlay}
-            className="press absolute bottom-2 right-2 grid h-11 w-11 translate-y-2 place-items-center rounded-full bg-ink-100 text-ink-0 opacity-0 shadow-xl transition-all duration-300 hover:scale-105 group-hover:translate-y-0 group-hover:opacity-100"
+            className="absolute bottom-2 right-2 grid h-11 w-11 translate-y-2 place-items-center rounded-full bg-ink-100 text-ink-0 opacity-0 shadow-xl transition-all duration-300 hover:scale-105 group-hover:translate-y-0 group-hover:opacity-100"
             aria-label={showPause ? 'Пауза' : 'Играть'}
           >
             {showPause ? <IconPause width={18} height={18} /> : <IconPlay width={18} height={18} />}

@@ -166,10 +166,9 @@ export function Search() {
             <section className="mt-8">
               <h2 className="mb-3 text-lg font-bold text-ink-100">Артисты</h2>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                {artists.map((a, i) => (
+                {artists.map((a) => (
                   <MediaCard
                     key={a.name}
-                    index={i}
                     to={`/artist/${encodeURIComponent(a.name)}`}
                     seed={a.name}
                     artwork={a.art}
@@ -187,10 +186,9 @@ export function Search() {
             <section className="mt-8">
               <h2 className="mb-3 text-lg font-bold text-ink-100">Альбомы</h2>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                {albums.map((a, i) => (
+                {albums.map((a) => (
                   <MediaCard
                     key={a.id}
-                    index={i}
                     to={`/album/${encodeURIComponent(a.artist)}::${encodeURIComponent(a.title)}`}
                     seed={a.id}
                     artwork={a.art}

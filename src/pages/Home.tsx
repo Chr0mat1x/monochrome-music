@@ -26,10 +26,10 @@ const ROWS = [
 
 function CardSkeleton() {
   return (
-    <div className="rounded-lg bg-ink-10 p-3">
-      <div className="skeleton aspect-square w-full rounded-md" />
-      <div className="skeleton mt-3 h-3 w-3/4 rounded" />
-      <div className="skeleton mt-2 h-2 w-1/2 rounded" />
+    <div className="animate-pulse-soft rounded-lg bg-ink-10 p-3">
+      <div className="aspect-square w-full rounded-md bg-ink-20" />
+      <div className="mt-3 h-3 w-3/4 rounded bg-ink-20" />
+      <div className="mt-2 h-2 w-1/2 rounded bg-ink-15" />
     </div>
   )
 }
@@ -47,10 +47,9 @@ function Row({ title, tracks, to }: { title: string; tracks: Track[]; to?: strin
         )}
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {tracks.slice(0, 6).map((t, i) => (
+        {tracks.slice(0, 6).map((t) => (
           <MediaCard
             key={t.id}
-            index={i}
             to={`/artist/${encodeURIComponent(t.artist)}`}
             seed={t.id}
             artwork={t.artwork}
@@ -238,10 +237,9 @@ export function Home() {
         <section className="mt-8">
           <h2 className="mb-3 text-xl font-bold tracking-tight text-ink-100">Недавно слушали</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {recentlyPlayed.slice(0, 6).map((t, i) => (
+            {recentlyPlayed.slice(0, 6).map((t) => (
               <MediaCard
                 key={t.id}
-                index={i}
                 to={`/artist/${encodeURIComponent(t.artist)}`}
                 seed={t.id}
                 artwork={t.artwork}
@@ -276,8 +274,8 @@ export function Home() {
         <section className="mt-8">
           <h2 className="mb-3 text-xl font-bold tracking-tight text-ink-100">Артисты</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {artists.map((a, i) => (
-              <MediaCard key={a.name} index={i} to={`/artist/${encodeURIComponent(a.name)}`} seed={a.name} artwork={portraits[a.name] ?? a.art} tone={55} title={a.name} subtitle="артист" circle />
+            {artists.map((a) => (
+              <MediaCard key={a.name} to={`/artist/${encodeURIComponent(a.name)}`} seed={a.name} artwork={portraits[a.name] ?? a.art} tone={55} title={a.name} subtitle="артист" circle />
             ))}
           </div>
         </section>

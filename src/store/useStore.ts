@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Playlist, RepeatMode, Track } from '../types'
 import { engine } from '../lib/audioEngine'
-import { cachedFullTrack, findAudiusFull, findSoundCloudFull, inferProfile, prefetchFullTracks, prefetchUpcoming, resolveFullAudio, subscribeFullTracks, upgradeToFullTrack } from '../lib/musicApi'
+import { cachedFullTrack, findAudiusFull, findSoundCloudFull, inferProfile, prefetchFullTracks, resolveFullAudio, subscribeFullTracks, upgradeToFullTrack } from '../lib/musicApi'
 import { nextWaveBatch } from '../lib/wave'
 import type { Taste } from '../lib/wave'
 import * as auth from '../lib/authApi'
@@ -299,11 +299,6 @@ export const useStore = create<StoreState>((set, get) => {
     if (index !== undefined) set({ queueIndex: index })
     void engine.load(track, true)
     persist(get())
-
-    // Prepare the next few tracks in the background so advancing to them is
-    // instant instead of waiting on a cold SoundCloud extraction.
-    const upcoming = get().queue.slice((index ?? get().queueIndex) + 1)
-    if (upcoming.length) prefetchUpcoming(upcoming, 3)
 
     // Commercial previews start playing immediately; meanwhile we look for the
     // full-length version and hot-swap it in (keeping the position) so the
