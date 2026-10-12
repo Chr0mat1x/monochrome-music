@@ -7,6 +7,7 @@ import { planMood, planMoodLocal, planToQuery } from '../lib/moodPlanner'
 import { searchAll, isPlayableTrack, preferOriginals, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
+import { ShareButton } from '../components/ShareButton'
 import { IconCheck, IconPlay, IconSparkles } from '../components/Icons'
 
 const QUICK_PROMPTS = [
@@ -249,6 +250,19 @@ export function Generate() {
                   {saved ? <IconCheck width={16} height={16} /> : null}
                   {saved ? 'Сохранено' : 'Сохранить в медиатеку'}
                 </button>
+                <ShareButton
+                  kind="playlist"
+                  playlist={{
+                    id: 'generated',
+                    name: result.name,
+                    description: result.description,
+                    tracks: result.tracks,
+                    cover: 'custom',
+                    owned: false,
+                    createdAt: 0,
+                  }}
+                  className="flex items-center gap-2 rounded-full border border-ink-40 px-5 py-2.5 text-sm font-semibold text-ink-90 transition-colors hover:border-ink-100"
+                />
                 <button className="rounded-full px-4 py-2.5 text-sm font-medium text-ink-60 hover:text-ink-100" onClick={() => void run()}>
                   Перегенерировать
                 </button>
