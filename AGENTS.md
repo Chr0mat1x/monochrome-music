@@ -12,12 +12,10 @@ Work is committed on `master` (HEAD `b5e6a09`), working tree clean.
   Hits" compilations, hour-long DJ sets, `.wav` placeholders, sub-45s clips —
   on Home, Search and the mood generator.
 - To resume locally: `npm run dev` (starts the yt-dlp proxy + Vite on :12000).
-- A container restart wipes the toolchain, so reinstall before building the app:
-  - `pip install yt-dlp` (full-length audio proxy needs it),
-  - JDK 21 at `/home/openhands/jdk` (Temurin),
-  - Android SDK at `/home/openhands/android-sdk` (cmdline-tools `latest`,
-    platform-tools, platforms;android-35, build-tools;35.0.0).
-  Then `JAVA_HOME=/home/openhands/jdk ANDROID_HOME=/home/openhands/android-sdk
+- A container restart wipes the toolchain. `scripts/bootstrap.sh` restores all
+  of it in one shot — yt-dlp, JDK 21 at `/home/openhands/jdk` (Temurin),
+  Android SDK at `/home/openhands/android-sdk` — and prints the exports to use.
+  Run it, then `JAVA_HOME=/home/openhands/jdk ANDROID_HOME=/home/openhands/android-sdk
   npm run build:apk`.
 - Known limit on this host: YouTube returns "Sign in to confirm you're not a
   bot" for anonymous datacenter IPs; SoundCloud is the reliable full-song path.
