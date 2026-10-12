@@ -373,6 +373,9 @@ async function scDirectUrl(trackId) {
   if (Date.now() < scBlockedUntil) throw new Error('soundcloud temporarily unavailable (rate limit)')
   const url = await scUrlFor(trackId)
   if (!url) throw new Error('soundcloud track is not streamable')
+  // Only a freshly extracted URL needs the playability probe. A cached URL was
+  // probed when it was first obtained, and re-probing it here would add a round
+  // trip to every single play before the audio even starts.
   await requirePlayable(url)
   return url
 }

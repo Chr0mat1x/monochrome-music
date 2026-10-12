@@ -1260,8 +1260,19 @@ export function resolveFullAudio(sourceId: string, src: 'yt' | 'sc' = 'yt'): Pro
 let ytServerBlocked = false
 
 async function resolveViaServer(sourceId: string, src: 'yt' | 'sc', attempts = 4): Promise<string | null> {
+  if (!(await hasAudioServer())) return null
+  // SoundCloud has a batch endpoint that waits for the extraction and reports
+  // which ids are ready. One call is far cheaper than the poll loop below,
+  // which sleeps and re-asks up to four times before giving up.
+  if (src === 'sc') {
+    const data = await jsonFetch<{ ok?: Record<string, boolean> }>(
+      `${AUDIO_SERVER}/sc-resolve?ids=${encodeURIComponent(sourceId)}`,
+      20000,
+    )
+    if (data?.ok?.[sourceId]) return `${AUDIO_SERVER}/audio?src=sc&id=${sourceId}`
+    return null
+  }
   for (let i = 0; i < attempts; i++) {
-    if (!(await hasAudioServer())) return null
     const data = await jsonFetch<{ ok?: boolean; denied?: boolean; blocked?: boolean }>(
       `${AUDIO_SERVER}/resolve?src=${src}&id=${sourceId}`,
       8000,
@@ -1324,6 +1335,23 @@ async function flushWarmBatch() {
   // waited for the whole batch (up to 40s), which is exactly the stall the
   // upgrade path was meant to avoid.
   void fetch(`${AUDIO_SERVER}/warm?ids=${ids.join(',')}`).catch(() => {})
+}
+
+/**
+ * Start preparing the tracks that are about to play, so pressing next — or the
+ * song simply ending — does not wait on a cold extraction. Only the immediate
+ * few are warmed: the extractor queue is serialised, and warming the whole
+ * queue would push the track the listener is waiting on to the back of it.
+ */
+export function prefetchUpcoming(tracks: Track[], count = 3): void {
+  const head = tracks.slice(0, count)
+  if (!head.length) return
+  void warmSoundCloudTracks(head.filter((t) => t.source === 'soundcloud'))
+  for (const t of head) {
+    if (t.preview && (t.source === 'deezer' || t.source === 'itunes')) {
+      void upgradeToFullTrack(t).catch(() => null)
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ *

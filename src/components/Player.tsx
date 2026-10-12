@@ -110,7 +110,7 @@ export function Player() {
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
         {playbackNote && (
-          <div className="mb-2 border border-ink-25 px-3 py-1 text-center text-[11px] text-ink-70">
+          <div className="animate-fade-up mb-2 border border-ink-25 px-3 py-1 text-center text-[11px] text-ink-70">
             {playbackNote}
           </div>
         )}
@@ -135,16 +135,26 @@ export function Player() {
           <div className="flex min-w-0 items-center gap-3">
             {track ? (
               <>
-                <button
-                  className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md sm:h-14 sm:w-14"
-                  onClick={() => setNowPlayingOpen(true)}
-                  aria-label="Открыть плеер"
-                >
-                  <Cover seed={track.id} artwork={track.artwork} tone={track.valence} className="h-full w-full" rounded="rounded-md" />
-                  <span className="absolute inset-0 grid place-items-center bg-black/50 opacity-0 transition-opacity hover:opacity-100">
-                    <IconExpand width={18} height={18} className="text-ink-100" />
-                  </span>
-                </button>
+                <span className="art-halo relative shrink-0">
+                  <button
+                    className="press relative block h-12 w-12 overflow-hidden rounded-md sm:h-14 sm:w-14"
+                    onClick={() => setNowPlayingOpen(true)}
+                    aria-label="Открыть плеер"
+                  >
+                    <span key={track.id} className="block h-full w-full animate-pop">
+                      <Cover
+                        seed={track.id}
+                        artwork={track.artwork}
+                        tone={track.valence}
+                        className={`h-full w-full ${playing ? 'animate-breathe' : ''}`}
+                        rounded="rounded-md"
+                      />
+                    </span>
+                    <span className="absolute inset-0 grid place-items-center bg-black/50 opacity-0 transition-opacity hover:opacity-100">
+                      <IconExpand width={18} height={18} className="text-ink-100" />
+                    </span>
+                  </button>
+                </span>
                 <div className="min-w-0">
                   <button
                     className="flex max-w-full items-center gap-2 truncate text-left text-sm font-medium text-ink-95 hover:underline"
@@ -187,17 +197,17 @@ export function Player() {
                 <IconPrev width={20} height={20} />
               </button>
               <button
-                className="grid h-11 w-11 place-items-center rounded-full bg-ink-100 text-ink-0 transition-transform duration-150 hover:scale-105 active:scale-95 disabled:opacity-40"
+                className="press grid h-11 w-11 place-items-center rounded-full bg-ink-100 text-ink-0 transition-transform duration-150 hover:scale-105 active:scale-95 disabled:opacity-40"
                 onClick={togglePlay}
                 disabled={!track}
                 aria-label={playing ? 'Пауза' : 'Играть'}
               >
                 {loading && track ? (
-                  <span className="h-4 w-4 animate-spin-slow rounded-full border-2 border-ink-0 border-t-transparent" />
-                ) : playing ? (
-                  <IconPause width={20} height={20} />
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-ink-0 border-t-transparent" />
                 ) : (
-                  <IconPlay width={20} height={20} />
+                  <span key={playing ? 'pause' : 'play'} className="animate-pop grid place-items-center">
+                    {playing ? <IconPause width={20} height={20} /> : <IconPlay width={20} height={20} />}
+                  </span>
                 )}
               </button>
               <button className="icon-btn h-9 w-9" onClick={() => next()} aria-label="Следующий">

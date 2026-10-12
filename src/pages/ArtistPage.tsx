@@ -142,9 +142,10 @@ export function ArtistPage() {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {filteredAlbums.map((a) => (
+            {filteredAlbums.map((a, i) => (
               <MediaCard
                 key={a.id}
+                index={i}
                 to={`/album/${encodeURIComponent(a.artist)}::${encodeURIComponent(a.title)}`}
                 seed={a.id}
                 artwork={a.artwork}

@@ -59,9 +59,9 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
   const progress = duration ? (pos / duration) * 100 : 0
 
   return (
-    <div className="glass-strong fixed inset-0 z-[60] flex animate-fade-up flex-col">
+    <div className="glass-strong fixed inset-0 z-[60] flex animate-slide-up-panel flex-col">
       <div className="pointer-events-none absolute inset-0 opacity-30">
-        <Cover seed={track.id} artwork={track.artwork} tone={track.valence} rounded="rounded-none" className="h-full w-full" />
+        <Cover seed={track.id} artwork={track.artwork} tone={track.valence} rounded="rounded-none" className={`h-full w-full ${playing ? 'animate-breathe' : ''}`} />
       </div>
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-ink-0/70 via-ink-0/90 to-ink-0" />
 
@@ -80,8 +80,15 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
         className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6"
         style={{ paddingBottom: 'max(2.5rem, env(safe-area-inset-bottom))' }}
       >
-        <div className="w-full max-w-[min(24rem,46dvh)]">
-          <Cover seed={track.id} artwork={track.artwork} tone={track.valence} rounded="rounded-xl" className="aspect-square w-full shadow-2xl shadow-black" alt={track.title} />
+        <div key={track.id} className="w-full max-w-[min(24rem,46dvh)] animate-pop">
+          <Cover
+            seed={track.id}
+            artwork={track.artwork}
+            tone={track.valence}
+            rounded="rounded-xl"
+            className={`aspect-square w-full shadow-2xl shadow-black ${playing ? 'animate-breathe' : ''}`}
+            alt={track.title}
+          />
         </div>
 
         <div className="h-16 w-full max-w-md opacity-80">

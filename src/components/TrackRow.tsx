@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Track } from '../types'
 import { useStore } from '../store/useStore'
+import { useReveal } from '../lib/useReveal'
 import { Cover } from './Cover'
 import { Equalizer } from './Visualizer'
 import { IconClock, IconDots, IconHeart, IconPause, IconPlay } from './Icons'
@@ -60,6 +61,8 @@ export function TrackRow({ track, index, context, showAlbum = true, showCover = 
   const liked = useStore((s) => s.liked.some((t) => t.id === track.id))
   const toggleLike = useStore((s) => s.toggleLike)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [burst, setBurst] = useState(false)
+  const rowRef = useReveal<HTMLDivElement>(index)
 
   const isCurrent = currentId === track.id
   const isPlaying = isCurrent && playing
@@ -67,13 +70,14 @@ export function TrackRow({ track, index, context, showAlbum = true, showCover = 
   return (
     <>
       <div
+        ref={rowRef}
         onDoubleClick={() => playContext(context, index)}
-        className={`group grid grid-cols-[26px_1fr_auto] items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-150 hover:bg-ink-20 md:grid-cols-[26px_minmax(0,4fr)_minmax(0,3fr)_auto] ${
+        className={`reveal group grid grid-cols-[26px_1fr_auto] items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-150 hover:bg-ink-20 md:grid-cols-[26px_minmax(0,4fr)_minmax(0,3fr)_auto] ${
           isCurrent ? 'bg-ink-15' : ''
         }`}
       >
         <button
-          className="grid h-7 w-7 place-items-center text-ink-60"
+          className="press grid h-7 w-7 place-items-center text-ink-60"
           onClick={() => (isCurrent ? togglePlay() : playContext(context, index))}
           aria-label={isPlaying ? 'Пауза' : 'Играть'}
         >
@@ -103,10 +107,18 @@ export function TrackRow({ track, index, context, showAlbum = true, showCover = 
         <div className="flex items-center gap-2">
           <button
             className={`icon-btn h-8 w-8 opacity-0 group-hover:opacity-100 ${liked ? '!opacity-100 text-ink-100' : ''}`}
-            onClick={() => toggleLike(track)}
+            onClick={() => {
+              toggleLike(track)
+              if (!liked) {
+                setBurst(true)
+                window.setTimeout(() => setBurst(false), 480)
+              }
+            }}
             aria-label={liked ? 'Убрать из избранного' : 'В избранное'}
           >
-            <IconHeart filled={liked} width={16} height={16} />
+            <span className={burst ? 'animate-heart inline-block' : 'inline-block'}>
+              <IconHeart filled={liked} width={16} height={16} />
+            </span>
           </button>
           <span className="w-10 text-right text-xs tabular-nums text-ink-60">{fmt(track.duration)}</span>
           <button

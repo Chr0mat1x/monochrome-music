@@ -1,4 +1,5 @@
 import { useStore } from '../store/useStore'
+import { useReveal } from '../lib/useReveal'
 import { Cover } from './Cover'
 import { formatDuration } from '../lib/format'
 import { IconClose, IconQueue, IconTrash } from './Icons'
@@ -13,7 +14,7 @@ export function QueuePanel({ onClose }: { onClose: () => void }) {
   const upcoming = queue.slice(queueIndex + 1)
 
   return (
-    <div className="glass-menu fixed bottom-[5.5rem] right-3 z-50 flex max-h-[60vh] w-[22rem] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl">
+    <div className="glass-menu fixed bottom-[5.5rem] right-3 z-50 flex max-h-[60vh] w-[22rem] max-w-[calc(100vw-1.5rem)] animate-slide-in-right flex-col overflow-hidden rounded-2xl">
       <div className="flex items-center justify-between border-b border-ink-25 px-4 py-3">
         <span className="flex items-center gap-2 text-sm font-semibold text-ink-95">
           <IconQueue width={16} height={16} /> Очередь
@@ -28,7 +29,7 @@ export function QueuePanel({ onClose }: { onClose: () => void }) {
         {currentId && (
           <>
             <p className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-widest text-ink-50">Сейчас играет</p>
-            <QueueItem track={queue[queueIndex]} active onRemove={undefined} />
+            <QueueItem track={queue[queueIndex]} active index={0} onRemove={undefined} />
           </>
         )}
 
@@ -39,6 +40,7 @@ export function QueuePanel({ onClose }: { onClose: () => void }) {
           <QueueItem
             key={`${t.id}-${queueIndex + 1 + i}`}
             track={t}
+            index={i + 1}
             onPlay={() => playContext(queue, queueIndex + 1 + i)}
             onRemove={() => removeFromQueue(queueIndex + 1 + i)}
           />
@@ -51,19 +53,25 @@ export function QueuePanel({ onClose }: { onClose: () => void }) {
 function QueueItem({
   track,
   active = false,
+  index = 0,
   onPlay,
   onRemove,
 }: {
   track?: import('../types').Track
   active?: boolean
+  index?: number
   onPlay?: () => void
   onRemove?: () => void
 }) {
+  const ref = useReveal<HTMLDivElement>(index, 35)
   if (!track) return null
   return (
-    <div className={`group flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-ink-20 ${active ? 'bg-ink-15' : ''}`}>
-      <button className="h-10 w-10 shrink-0 overflow-hidden rounded" onClick={onPlay} aria-label="Играть">
-        <Cover seed={track.id} artwork={track.artwork} tone={track.valence} className="h-full w-full" rounded="rounded" />
+    <div
+      ref={ref}
+      className={`reveal group flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-ink-20 ${active ? 'bg-ink-15' : ''}`}
+    >
+      <button className="press h-10 w-10 shrink-0 overflow-hidden rounded" onClick={onPlay} aria-label="Играть">
+        <Cover seed={track.id} artwork={track.artwork} tone={track.valence} className={`h-full w-full ${active ? 'animate-breathe' : ''}`} rounded="rounded" />
       </button>
       <div className="min-w-0 flex-1">
         <div className={`truncate text-sm ${active ? 'text-ink-100' : 'text-ink-90'}`}>{track.title}</div>

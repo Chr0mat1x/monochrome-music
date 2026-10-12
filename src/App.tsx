@@ -27,6 +27,33 @@ function ScrollReset() {
   return null
 }
 
+/**
+ * Re-key the page on every navigation so it mounts fresh and plays its entry
+ * animation — the whole view eases up into place instead of snapping.
+ */
+function PageRoutes() {
+  const { pathname } = useLocation()
+  return (
+    <div key={pathname} className="animate-route-in">
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/search" element={<Search />} />
+        <Route path="/generate" element={<Generate />} />
+        <Route path="/wave" element={<Wave />} />
+        <Route path="/library" element={<Library />} />
+        <Route path="/album/:id" element={<AlbumPage />} />
+        <Route path="/artist/:name" element={<ArtistPage />} />
+        <Route path="/playlist/:id" element={<PlaylistPage />} />
+        <Route path="/s/:payload" element={<SharedPage />} />
+        <Route path="/liked" element={<LikedSongs />} />
+        <Route path="/auth" element={<AuthPanel />} />
+        <Route path="/home" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </div>
+  )
+}
+
 export default function App() {
   const [navOpen, setNavOpen] = useState(false)
   const restoreSession = useStore((s) => s.restoreSession)
@@ -65,21 +92,7 @@ export default function App() {
           <div id="main-scroll" className="h-full overflow-y-auto">
             <TopBar onOpenNav={() => setNavOpen(true)} />
             <ScrollReset />
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/search" element={<Search />} />
-              <Route path="/generate" element={<Generate />} />
-              <Route path="/wave" element={<Wave />} />
-              <Route path="/library" element={<Library />} />
-              <Route path="/album/:id" element={<AlbumPage />} />
-              <Route path="/artist/:name" element={<ArtistPage />} />
-              <Route path="/playlist/:id" element={<PlaylistPage />} />
-              <Route path="/s/:payload" element={<SharedPage />} />
-              <Route path="/liked" element={<LikedSongs />} />
-              <Route path="/auth" element={<AuthPanel />} />
-              <Route path="/home" element={<Navigate to="/" replace />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            <PageRoutes />
           </div>
         </div>
         <Player />
