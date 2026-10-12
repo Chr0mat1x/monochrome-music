@@ -130,6 +130,12 @@ public class SoundCloudBridge {
         for (int i = 0; i < collection.length(); i++) {
             JSONObject t = collection.optJSONObject(i);
             if (t == null) continue;
+            // Licensed (MONETIZE) uploads have no anonymous progressive stream
+            // and answer 404 on resolve, so listing them only produces tracks
+            // that fail the moment they are tapped. Drop them and let the
+            // playable uploads fill the list instead.
+            String policy = t.optString("policy", "");
+            if ("MONETIZE".equals(policy) || !t.optBoolean("streamable", true)) continue;
             JSONObject user = t.optJSONObject("user");
             JSONObject item = new JSONObject();
             item.put("id", t.optString("id", ""));
@@ -137,6 +143,9 @@ public class SoundCloudBridge {
             item.put("artist", user != null ? user.optString("username", "") : "");
             item.put("duration", t.optLong("duration", 0) / 1000);
             item.put("artwork", t.optString("artwork_url", ""));
+            // 'SNIP' uploads are the 30-second clips the rights holder allows;
+            // the UI labels them as previews and tries to upgrade to a full one.
+            item.put("policy", policy);
             out.put(item);
         }
         return out.toString();

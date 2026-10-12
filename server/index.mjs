@@ -172,8 +172,92 @@ const scDenied = new Set()
 // this they would queue three identical yt-dlp runs behind each other.
 const scInflight = new Map()
 
+/* ------------------------------------------------------------------ *
+ * Direct SoundCloud API resolver.
+ *
+ * yt-dlp is the long-standing way to turn a SoundCloud id into audio, but it
+ * is fragile and, on a datacenter IP, returns HTTP 403 in bursts. That 403 was
+ * being read as a rate limit and put the *whole* catalogue on a 60-second
+ * timeout, so every track after the first few played nothing at all — the exact
+ * "ничего не играет" report.
+ *
+ * SoundCloud's own API is what the Android bridge already uses and it is far
+ * more reliable: scrape a client_id from the public bundle once, then ask
+ * api-v2 for the track and its progressive MP3. A major-label upload (policy
+ * MONETIZE) has no anonymous progressive stream and answers 404, which is a
+ * clean, per-track "unavailable" instead of a global outage — so playable
+ * tracks no longer get poisoned by their unplayable neighbours.
+ * ------------------------------------------------------------------ */
+const SC_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
+let scClientId = null
+let scClientIdAt = 0
+
+async function scHttp(url, ms = 8000) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), ms)
+  try {
+    const res = await fetch(url, { headers: { 'user-agent': SC_UA, accept: 'application/json' } , signal: ctrl.signal })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return await res.json()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Scrape and cache a public client_id from SoundCloud's web bundle. */
+async function scGetClientId(refresh = false) {
+  if (!refresh && scClientId && Date.now() - scClientIdAt < 30 * 60 * 1000) return scClientId
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 8000)
+  try {
+    const home = await (await fetch('https://soundcloud.com/', {
+      headers: { 'user-agent': SC_UA },
+      signal: ctrl.signal,
+    })).text()
+    const scripts = [...home.matchAll(/src="(https:\/\/[^"]*sndcdn\.com\/assets\/[^"]+\.js)"/g)].map((m) => m[1])
+    for (const src of scripts.reverse()) {
+      const js = await (await fetch(src, { headers: { 'user-agent': SC_UA }, signal: ctrl.signal })).text()
+      const m = /client_id\s*[:=]\s*"([a-zA-Z0-9]{32})"/.exec(js)
+      if (m) {
+        scClientId = m[1]
+        scClientIdAt = Date.now()
+        return scClientId
+      }
+    }
+  } catch {
+    /* fall through — caller falls back to yt-dlp */
+  } finally {
+    clearTimeout(timer)
+  }
+  return null
+}
+
+/** Resolve one id through api-v2; null means "cannot stream anonymously". */
+async function extractScViaApi(id, refresh = false) {
+  const cid = await scGetClientId(refresh)
+  if (!cid) throw new Error('no client id')
+  const track = await scHttp(`https://api-v2.soundcloud.com/tracks/${id}?client_id=${cid}`)
+  const transcodings = (track.media && track.media.transcodings) || []
+  const endpoint = transcodings.find((t) => t.format && t.format.protocol === 'progressive')
+  // No progressive stream = a licensed upload we cannot play without the
+  // listener's SoundCloud account. That is permanent for this id.
+  if (!endpoint) return null
+  const resolved = await scHttp(`${endpoint.url}?client_id=${cid}`)
+  const url = resolved && resolved.url
+  // SoundCloud tags its 30-second clips in the URL; never serve one as a song.
+  if (!url || /preview/i.test(url)) return null
+  return url
+}
+
+// The API path can itself fail (rotated client_id, transient network). Do not
+// deny the whole catalogue on that — remember when to fall back and let the
+// per-track yt-dlp path try instead.
+let scApiBrokenUntil = 0
+
 /**
- * Ask yt-dlp for the direct URL of a single SoundCloud upload.
+ * Ask for the direct URL of a single SoundCloud upload.
  * Returns null when the upload cannot be streamed (DRM, region lock).
  */
 function scUrlFor(id) {
@@ -182,9 +266,29 @@ function scUrlFor(id) {
   if (cached && cached.expires > Date.now()) return Promise.resolve(cached.url)
   const flying = scInflight.get(id)
   if (flying) return flying
-  const task = extractScUrl(id).finally(() => scInflight.delete(id))
+  const task = resolveScUrl(id).finally(() => scInflight.delete(id))
   scInflight.set(id, task)
   return task
+}
+
+async function resolveScUrl(id) {
+  if (Date.now() >= scApiBrokenUntil) {
+    try {
+      const url = await extractScViaApi(id)
+      if (url) {
+        urlCache.set(`sc:${id}`, { url, expires: Date.now() + URL_TTL })
+        return url
+      }
+      // 404 / no progressive: genuinely unplayable anonymously, remember it.
+      scDenied.add(id)
+      return null
+    } catch {
+      // The API layer, not the track, is at fault. Back off briefly and let the
+      // extractor have a turn rather than failing the listener's track.
+      scApiBrokenUntil = Date.now() + 60 * 1000
+    }
+  }
+  return extractScUrl(id)
 }
 
 async function extractScUrl(id) {
@@ -203,14 +307,13 @@ async function extractScUrl(id) {
     )
   } catch (e) {
     const message = String(e.message || e)
-    // A rate limit or 403 says nothing about the upload itself, so back the
-    // queue off and leave the id alone — marking it denied here would poison a
-    // perfectly good track for the rest of the session.
+    // A DRM-protected or region-locked upload is permanent for this id. Unlike
+    // before, a 403 no longer poisons the whole catalogue: the API path above
+    // carries the traffic, so a yt-dlp burst limit only costs this one track.
     if (/403|forbidden|rate limit|temporarily unavailable/i.test(message)) {
       scBlockedUntil = Date.now() + 60 * 1000
       return null
     }
-    // Anything else (DRM, region lock, no progressive format) is permanent.
     scDenied.add(id)
     return null
   }
@@ -227,18 +330,47 @@ async function extractScUrl(id) {
 }
 
 /**
- * Search SoundCloud, then resolve only as many candidates as the caller needs.
- *
- * The old version asked yt-dlp for the direct URL of every result in the same
- * run. That is fine on a good day, but each DRM-protected upload still costs a
- * separate extraction attempt inside that run, and SoundCloud's 403s make those
- * attempts slow. The result was a search that took minutes and blocked the
- * queue that playback depends on. Listing first is a single fast call; the
- * playable subset is then resolved in small parallel batches, so the page
- * renders immediately and the first tracks are ready almost as fast.
+ * Search SoundCloud through api-v2. Unlike the yt-dlp flat search this also
+ * exposes each track's `policy`, so licensed (MONETIZE) uploads — which have no
+ * anonymous stream and would only ever fail on click — can be dropped before
+ * they ever reach the UI. Artwork and the uploader name come along for free,
+ * which yt-dlp's flat listing does not provide.
  */
+async function scApiSearch(query, n) {
+  const cid = await scGetClientId()
+  if (!cid) throw new Error('no client id')
+  const data = await scHttp(
+    `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${cid}&limit=${n}`,
+  )
+  const collection = (data && data.collection) || []
+  return collection
+    .filter((t) => t && t.streamable !== false && t.policy !== 'MONETIZE')
+    .map((t) => ({
+      id: String(t.id),
+      title: t.title || '',
+      duration: (Number(t.duration) || 0) / 1000,
+      channel: (t.user && t.user.username) || '',
+      thumbnail: t.artwork_url || (t.user && t.user.avatar_url) || '',
+      // 'SNIP' uploads are the 30-second clips the rights holders allow
+      // anonymously; the UI labels them as previews instead of pretending they
+      // are full songs. 'ALLOW' uploads are genuine full-length streams.
+      policy: t.policy || '',
+      streamUrl: '',
+    }))
+    .filter((i) => SC_ID.test(i.id))
+    // Full-length uploads first, so the top of a search is playable in full and
+    // the 30-second clips fall to the bottom rather than leading the list.
+    .sort((a, b) => (a.policy === 'SNIP' ? 1 : 0) - (b.policy === 'SNIP' ? 1 : 0))
+}
+
 async function scSearchDirect(prefix, query, n, need = 4) {
-  const listed = await scFlatSearch(prefix, query, n)
+  let listed = []
+  try {
+    listed = await scApiSearch(query, n)
+  } catch {
+    // api-v2 unavailable (client_id scrape failed) — fall back to the extractor.
+    listed = await scFlatSearch(prefix, query, n)
+  }
   if (listed.length && Date.now() >= scBlockedUntil) {
     // Resolve in the background and return the listing now. The frontend polls
     // /api/resolve per id, so the page renders in about a second instead of

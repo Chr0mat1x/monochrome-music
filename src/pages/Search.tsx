@@ -37,7 +37,7 @@ export function Search() {
     let cancelled = false
     setBusy(true)
     const timer = window.setTimeout(async () => {
-      const tracks = preferOriginals((await searchAll(q, 40)).filter(isPlayableTrack))
+      const tracks = preferOriginals((await searchAll(q, 40, true)).filter(isPlayableTrack))
       if (cancelled) return
       setResults(tracks)
       register(tracks)

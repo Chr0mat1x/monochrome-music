@@ -155,7 +155,7 @@ export async function nextWaveBatch(
   const queries = pickQueries(taste, seed)
 
   const batches = await Promise.all(
-    queries.map((q) => searchAll(q, 30).catch(() => [])),
+    queries.map((q) => searchAll(q, 30, true).catch(() => [])),
   )
 
   const seen = new Set<string>()

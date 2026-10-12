@@ -17,7 +17,9 @@ function fmt(sec: number): string {
 export function SourceBadge({ track }: { track: Track }) {
   const label =
     track.source === 'soundcloud'
-      ? 'SOUNDCLOUD · ПОЛНЫЙ'
+      ? track.preview
+        ? 'SOUNDCLOUD · ПРЕВЬЮ 30С'
+        : 'SOUNDCLOUD · ПОЛНЫЙ'
       : track.source === 'youtube'
         ? 'YOUTUBE · ПОЛНЫЙ'
         : track.preview
@@ -25,7 +27,9 @@ export function SourceBadge({ track }: { track: Track }) {
           : 'ПОЛНЫЙ ТРЕК'
   const title =
     track.source === 'soundcloud'
-      ? 'Полная версия — потоковая передача через сервер MONOCHROME'
+      ? track.preview
+        ? 'SoundCloud отдаёт этот трек анонимно только 30 секундами; плеер поищет полную версию'
+        : 'Полная версия — потоковая передача через сервер MONOCHROME'
       : track.source === 'youtube'
         ? 'Полная версия — воспроизведение через официальный плеер YouTube'
         : track.preview

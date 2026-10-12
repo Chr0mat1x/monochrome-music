@@ -17,6 +17,8 @@ export interface NativeSoundCloudItem {
   artist: string
   duration: number
   artwork: string
+  /** 'SNIP' marks the 30-second clips SoundCloud allows anonymously. */
+  policy?: string
 }
 
 interface MonoNative {

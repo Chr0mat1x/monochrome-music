@@ -71,7 +71,7 @@ export function Generate() {
     // model-authored queries first, rule-based terms appended, then fan out
     const queries = buildSearchQueries(query, text, plan?.queries ?? [])
     const batches = await Promise.all(
-      queries.map((q) => searchAll(q, Math.max(limit, 40)).catch(() => [])),
+      queries.map((q) => searchAll(q, Math.max(limit, 40), true).catch(() => [])),
     )
     const seen = new Set<string>()
     const pool: Track[] = []

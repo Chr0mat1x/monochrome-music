@@ -579,6 +579,8 @@ interface ServerSearchItem {
   thumbnail?: string
   /** Present when the server resolved the direct audio URL during the search. */
   streamUrl?: string
+  /** SoundCloud rights policy: 'SNIP' uploads are 30-second clips. */
+  policy?: string
 }
 
 /** Build a playable SoundCloud track. SoundCloud streams full-length audio
@@ -606,7 +608,9 @@ function buildSoundCloudTrack(i: ServerSearchItem): Track {
     streamUrl: i.streamUrl ?? null,
     artwork: i.thumbnail || null,
     streamable: true,
-    preview: false,
+    // A SNIP upload is the 30-second clip the rights holder allows; flag it so
+    // the UI shows "ПРЕВЬЮ" and the player tries to upgrade to a full version.
+    preview: i.policy === 'SNIP',
     sourceId: i.id!,
     permalink: null,
   }
@@ -680,6 +684,7 @@ export async function searchSoundCloud(query: string, limit = 25): Promise<Track
             channel: i.artist,
             duration: i.duration,
             thumbnail: i.artwork,
+            policy: i.policy,
           }),
         )
     }
