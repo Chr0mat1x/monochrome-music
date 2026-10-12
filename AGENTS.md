@@ -334,6 +334,13 @@ tolerate unknown ones, so links created by an older build keep opening.
   `catalogueProxied()`/`proxied()` when the server is reachable. Do not widen
   `CATALOG_HOSTS` carelessly — the endpoint is only safe because it refuses
   anything not on the list.
+* **Deezer media lives on `.dzcdn.net`, not on `api.deezer.com`.** Previews are
+  served from `cdnt-preview.dzcdn.net` (and cover art from
+  `e-cdns-images.dzcdn.net`). Leaving those hosts out of the allow-list made
+  every Deezer preview 400 in the proxy, which surfaced to the listener as songs
+  skipping themselves: each failure triggered the "find a full version" path and
+  then `next()`. If tracks start auto-advancing, check the proxy allow-list
+  first.
 * **The proxy must ask for `accept-encoding: identity`.** Node transparently
   gunzips an upstream body, so forwarding the *compressed* `content-length`
   truncates the JSON. The header keeps the body uncompressed and the length

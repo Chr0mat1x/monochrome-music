@@ -91,6 +91,11 @@ const CATALOG_HOSTS = new Set([
   'api.audius.co',
   'discoveryprovider.audius.co',
 ])
+/** Deezer serves previews and cover art from rotating CDN subdomains
+ * (`cdnt-preview.dzcdn.net`, `e-cdns-images.dzcdn.net`, …). All are Deezer's,
+ * and all are blocked in the same regions as the API, so the whole zone is
+ * allowed rather than an ever-changing host list. */
+const DEEZER_MEDIA_SUFFIX = '.dzcdn.net'
 /** Audius content nodes serve the actual audio; their hostnames vary, so match
  * the suffixes the network uses rather than an exhaustive list. */
 const AUDIUS_MEDIA_SUFFIXES = ['.audius.co', '.staked.cloud', '.figment.io', '.theblueprint.xyz', '.monophonic.digital', '.rickyrombo.com', '.open-audio-validator.com']
@@ -104,6 +109,7 @@ function isAllowedProxyUrl(raw) {
   }
   if (u.protocol !== 'https:') return false
   if (CATALOG_HOSTS.has(u.hostname)) return true
+  if (u.hostname.endsWith(DEEZER_MEDIA_SUFFIX)) return true
   return AUDIUS_MEDIA_SUFFIXES.some((s) => u.hostname.endsWith(s))
 }
 
