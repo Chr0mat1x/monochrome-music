@@ -162,19 +162,12 @@ runs full-screen on a phone from the home screen.
   distinction between 30s previews and full streams stays honest.
 - The engine drives the store through `engine.setEvents` (onEnded, onPlaying-
   Change, onLoadingChange, onDuration, onError). Keep that wiring intact.
-- Motion lives in two places: keyframes/animation utilities in
-  `tailwind.config.js` (`animate-route-in/pop/heart/breathe/shimmer/...`) and
-  the `.reveal` / `.skeleton` / `.press` / `.art-halo` helpers in
-  `src/index.css`. Lists and card grids stagger with `useReveal`
-  (`src/lib/useReveal.ts`), which returns a ref to attach and sets
-  `--reveal-delay` per item. `App.tsx` re-keys the route wrapper on navigation
-  so each page eases in. Every decorative animation collapses under
-  `prefers-reduced-motion` — do not add motion that ignores that media query.
-- Loading is kept fast by warming ahead: `startTrack` calls
-  `prefetchUpcoming(queue, 3)`, and client SoundCloud resolves go through the
-  batch `/api/sc-resolve` endpoint in one round trip rather than the old
-  poll loop. The extractor queue is serialised, so keep any warm-ahead small
-  or a long prefetch pushes the awaited track to the back of the queue.
+- Do NOT add a scroll-reveal / opacity-0-until-observed motion layer to lists
+  and cards. A previous attempt (reverted in 1ed4fe9) left cards and rows at
+  `opacity: 0` until an IntersectionObserver fired, which read as the page
+  "not loading" and risked hiding content entirely. Entry motion that starts
+  visible (CSS keyframes with `both` fill) is fine; motion that hides content
+  until JS reveals it is not.
 - Player keyboard shortcuts live in `Player.tsx` (space, ←/→ seek 5s, ↑/↓
   volume, N/B next/prev, S shuffle, R repeat, M mute). They ignore events
   whose target is an input/textarea.
