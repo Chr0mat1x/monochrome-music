@@ -1,7 +1,7 @@
 # MONOCHROME — AGENTS.md
 
 ## Session snapshot (2026-10-08)
-Work is committed on `master` (HEAD `208e09d`), pushed to `origin/main`.
+Work is committed on `master` (HEAD `7a0d1bd`), pushed to `origin/main`.
 - Full-length playback: SoundCloud via `api-v2.soundcloud.com` (server-side
   proxy at `/api`); a playability probe keeps only tracks that actually stream.
   Your machine's proxy handles it, the hosted site streams through `/api`.
