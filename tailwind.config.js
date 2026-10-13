@@ -44,6 +44,8 @@ export default {
         'spin-slow': 'spin 8s linear infinite',
         'fade-up': 'fadeUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both',
         'pulse-soft': 'pulseSoft 3s ease-in-out infinite',
+        'tab-left': 'tabLeft 220ms cubic-bezier(0.22, 1, 0.36, 1) both',
+        'tab-right': 'tabRight 220ms cubic-bezier(0.22, 1, 0.36, 1) both',
       },
       keyframes: {
         bar: {
@@ -53,6 +55,17 @@ export default {
         fadeUp: {
           '0%': { opacity: '0', transform: 'translateY(10px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        // The end state is `transform: none` on purpose: a lingering transform
+        // would make this wrapper the containing block for the `position: fixed`
+        // overlays (track menu, now-playing) rendered inside it.
+        tabLeft: {
+          '0%': { opacity: '0', transform: 'translateX(18px)' },
+          '100%': { opacity: '1', transform: 'none' },
+        },
+        tabRight: {
+          '0%': { opacity: '0', transform: 'translateX(-18px)' },
+          '100%': { opacity: '1', transform: 'none' },
         },
         pulseSoft: {
           '0%, 100%': { opacity: '0.5' },

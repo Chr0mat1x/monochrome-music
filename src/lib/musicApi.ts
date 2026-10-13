@@ -1205,6 +1205,13 @@ let audioServerProbe: Promise<boolean> | null = null
 
 /** Probe the companion server once per session. */
 export function hasAudioServer(): Promise<boolean> {
+  // The offline APK has no companion server; the native bridge covers
+  // SoundCloud instead. Probing anyway would hit the asset loader (a 404 for
+  // /api/health) and cost a pointless round trip on every start.
+  if (hasNativeBridge()) {
+    audioServerUp = false
+    return Promise.resolve(false)
+  }
   if (audioServerUp !== null) return Promise.resolve(audioServerUp)
   if (audioServerProbe) return audioServerProbe
   audioServerProbe = (async () => {

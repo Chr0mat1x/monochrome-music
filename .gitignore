@@ -10,3 +10,9 @@ downloads/*.apk
 
 # Local account store (email + password hashes + per-user libraries)
 server/.data/
+
+# local dev/build helpers (this box only)
+.run-dev.sh
+scripts/build-apk-local.sh
+.dev.log
+.apk.log

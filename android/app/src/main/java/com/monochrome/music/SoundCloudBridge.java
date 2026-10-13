@@ -126,12 +126,78 @@ public class SoundCloudBridge {
         // result sets, so a short page can filter down to nothing. SoundCloud's
         // first fifty hits for "lofi" are all licensed, so a bare query also
         // gets broadened once before we accept an empty answer.
-        JSONArray out = page(query, id, 50);
+        JSONArray out = playablePage(query, id);
         if (out.length() == 0) {
-            out = page(query + " mix", id, 50);
-            if (out.length() == 0) out = page(query + " beats", id, 50);
+            out = playablePage(query + " mix", id);
+            if (out.length() == 0) out = playablePage(query + " beats", id);
+        }
+        if (out.length() > 25) {
+            JSONArray cut = new JSONArray();
+            for (int i = 0; i < 25; i++) cut.put(out.getJSONObject(i));
+            return cut.toString();
         }
         return out.toString();
+    }
+
+    /**
+     * List a query and keep only uploads that will actually play.
+     *
+     * Passing the policy filter is not enough: many ALLOW uploads carry only
+     * HLS transcodings, which a {@code <audio>} element cannot decode. The
+     * search response lists HLS for *everything* — it never shows a progressive
+     * stream — so the only way to tell them apart is to ask for the track and
+     * look. Without this the app lists tracks that fail the moment they are
+     * tapped, which is exactly the "ничего не играет" symptom.
+     */
+    private JSONArray playablePage(String query, String id) throws Exception {
+        JSONArray listed = page(query, id, 50);
+        if (listed.length() == 0) return listed;
+        JSONArray kept = probe(listed, id);
+        // If the probe confirmed nothing the API layer is probably having a bad
+        // day rather than the whole catalogue being HLS; trust the policy filter
+        // instead of returning a blank page.
+        return kept.length() > 0 ? kept : listed;
+    }
+
+    /** Keep the listed tracks whose own record exposes a progressive stream. */
+    private JSONArray probe(JSONArray listed, final String id) throws Exception {
+        final int n = Math.min(listed.length(), 15);
+        final boolean[] ok = new boolean[n];
+        final java.util.concurrent.atomic.AtomicInteger cursor =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+        Thread[] pool = new Thread[Math.min(6, n)];
+        for (int t = 0; t < pool.length; t++) {
+            pool[t] = new Thread(() -> {
+                int i;
+                while ((i = cursor.getAndIncrement()) < n) {
+                    try {
+                        ok[i] = hasProgressive(listed.getJSONObject(i).optString("id", ""), id);
+                    } catch (Exception ignored) {
+                        ok[i] = false;
+                    }
+                }
+            });
+            pool[t].start();
+        }
+        for (Thread th : pool) th.join();
+        JSONArray out = new JSONArray();
+        for (int i = 0; i < n; i++) if (ok[i]) out.put(listed.getJSONObject(i));
+        return out;
+    }
+
+    private boolean hasProgressive(String trackId, String id) throws Exception {
+        if (trackId.isEmpty() || id == null) return false;
+        JSONObject track = new JSONObject(get(
+                "https://api-v2.soundcloud.com/tracks/" + trackId + "?client_id=" + id));
+        JSONObject media = track.optJSONObject("media");
+        JSONArray transcodings = media != null ? media.optJSONArray("transcodings") : null;
+        if (transcodings == null) return false;
+        for (int i = 0; i < transcodings.length(); i++) {
+            JSONObject t = transcodings.optJSONObject(i);
+            JSONObject format = t != null ? t.optJSONObject("format") : null;
+            if (format != null && "progressive".equals(format.optString("protocol"))) return true;
+        }
+        return false;
     }
 
     private JSONArray page(String query, String id, int limit) throws Exception {
