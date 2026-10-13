@@ -96,21 +96,46 @@ runs full-screen on a phone from the home screen.
   `output=jsonp&callback=…`. This is the one source that is not `fetch`-based;
   do not "fix" it back to `fetch` or Deezer silently returns nothing.
 - iTunes and Audius send `Access-Control-Allow-Origin: *`. Do not proxy them.
-- SoundCloud search/resolve runs server-side (yt-dlp `scsearch`); the browser
-  never talks to SoundCloud directly. `http_mp3` is chosen because a browser
-  `<audio>` element cannot play SoundCloud's HLS manifest.
+- SoundCloud search/resolve runs server-side; the browser never talks to
+  SoundCloud directly. `http_mp3` is chosen because a browser `<audio>` element
+  cannot play SoundCloud's HLS manifest.
+- **SoundCloud goes through `api-v2.soundcloud.com` with a scraped `client_id`,
+  not yt-dlp** (`scApiSearch`, `scGetClientId`, `scUrlFor`). yt-dlp is only a
+  fallback now: from a datacenter IP it answers HTTP 403 in bursts, so routing
+  normal traffic through it made search slow and playback flaky.
+- **Three gates decide what a search may return**, and all three are needed
+  because SoundCloud's anonymous policy is the opposite of what a listener
+  expects:
+  1. `policy === 'MONETIZE'` (licensed majors) has **no** anonymous stream at
+     all — resolve returns 404. Dropped in `playableFrom`.
+  2. Over-fetch, don't filter a short page: SoundCloud's first fifty hits for
+     `"lofi"` are **all** MONETIZE, so a `limit=10` request filtered strictly
+     returns nothing. `fetchN` asks for up to 60, then cuts back. A query that
+     still yields nothing is broadened once to `"<q> mix"` / `"<q> beats"` so a
+     broad one-word search is never a blank page.
+  3. Many ALLOW uploads carry **only HLS** transcodings, which `<audio>` cannot
+     play; the search response lists only HLS for everything, so it cannot be
+     filtered by inspection. `probeProgressive` resolves the leading candidates
+     and keeps the ones with a progressive stream. The probe also warms the
+     resolve cache, so the clicked track starts instantly. If the probe finds
+     nothing the API layer is likely degraded — trust the policy filter rather
+     than blank the page.
+- **`SNIP` uploads are playable 30-second clips, not junk.** Their progressive
+  stream is served from `cf-preview-media`; rejecting URLs containing `preview`
+  is what previously made every SNIP track fail to play. They are kept, flagged
+  `policy: 'SNIP'`, labelled `ПРЕВЬЮ 30С` in the UI and sorted below full tracks.
+- **yt-dlp failures never poison a track.** The fallback path only sets
+  `scBlockedUntil` (a 60s throttle); it does not add the id to a permanent
+  denial set. Marking ids denied on a 403/timeout is what previously made good
+  tracks unplayable for the rest of the process.
 - **SoundCloud calls are serialised and batched** (`scSerial`, `scSearchDirect`,
-  `scResolveMany`, `/api/sc-resolve`). yt-dlp pays ~0.5s of Python startup per
-  process, so one process per candidate dominated the wait; and SoundCloud
-  answers a *burst* of extractor calls with HTTP 403 that can lock playback out
-  for minutes. `/api/search?src=sc` therefore searches **and resolves** the
-  results in one process, and `/api/sc-resolve?ids=a,b,c` resolves a whole batch
-  in one. Every SoundCloud extraction goes through `scSerial`, so the server
-  never fires two at once. The resulting direct URL is stored on the track
-  (`streamUrl`), so clicking a search result plays instantly instead of
-  triggering another lookup; `AudioEngine.urlFor` reuses it and re-resolves once
-  if the URL has expired. A failed/rate-limited SoundCloud search returns an
-  empty list rather than a 502, so Deezer/iTunes/Audius still fill the page.
+  `scResolveMany`, `/api/sc-resolve`). A *burst* of extractor calls gets HTTP
+  403 that can lock playback out for minutes, so `/api/sc-resolve?ids=a,b,c`
+  resolves a whole batch through one serialised queue. The resulting direct URL
+  is stored on the track (`streamUrl`), so clicking a search result plays
+  instantly; `AudioEngine.urlFor` reuses it and re-resolves once if expired. A
+  failed/rate-limited SoundCloud search returns an empty list rather than a 502,
+  so Deezer/iTunes/Audius still fill the page.
 - **Extractor backoff.** Both sources refuse anonymous datacenter IPs in bursts
   (SoundCloud: HTTP 403; YouTube: "Sign in to confirm you're not a bot" / "This
   video is not available"). `directUrl`/`scDirectUrl` set `ytBlockedUntil` /
@@ -398,6 +423,25 @@ Two mistakes caused a total playback outage and are worth not repeating:
 2. **Search never asked SoundCloud.** `searchAll(q, 40)` defaulted to
    `soundcloud = false`, so the results were Deezer/iTunes 30s previews plus
    YouTube — nothing full-length. Search/Generate/Wave now pass `true`.
+
+A second outage (an empty search page even though search *did* call SoundCloud)
+had three more causes:
+
+3. **A short page filtered down to nothing.** `limit=10` fetched ten results,
+   dropped the MONETIZE ones, and often had zero left — SoundCloud's first
+   *fifty* hits for `"lofi"` are all MONETIZE. Search now over-fetches up to 60
+   and broadens a still-empty query to `"<q> mix"` / `"<q> beats"`.
+4. **ALLOW was trusted without checking the stream.** Plenty of ALLOW uploads
+   carry only HLS transcodings, which `<audio>` cannot play; the search response
+   lists only HLS for *everything*, so it cannot be filtered by inspection.
+   `probeProgressive` now resolves the leading candidates and keeps the ones
+   with a real progressive stream.
+5. **SNIP previews were rejected instead of played.** Their progressive stream
+   lives on `cf-preview-media`, and the old `if (/preview/i.test(url)) return
+   null` guard made every SNIP track fail. They are playable 30-second clips and
+   are now kept and labelled. Related: the yt-dlp fallback used to add the id to
+   a **permanent** denial set on any 403/timeout, so one transient failure made a
+   good track unplayable until the process restarted. It only throttles now.
 
 If playback breaks again, check in this order: does `/api/search?src=sc&q=…`
 return items, does `/api/resolve?src=sc&id=…` return `{"ok":true}`, and does

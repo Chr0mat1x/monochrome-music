@@ -246,8 +246,11 @@ async function extractScViaApi(id, refresh = false) {
   if (!endpoint) return null
   const resolved = await scHttp(`${endpoint.url}?client_id=${cid}`)
   const url = resolved && resolved.url
-  // SoundCloud tags its 30-second clips in the URL; never serve one as a song.
-  if (!url || /preview/i.test(url)) return null
+  if (!url) return null
+  // A SNIP upload's progressive stream lives on cf-preview-media and is a real,
+  // playable 30-second MP3. It is served as-is: the search already flagged the
+  // track `preview`, so the UI says "ПРЕВЬЮ 30С" rather than pretending it is a
+  // full song. Rejecting the URL here is what made SNIP tracks fail to play.
   return url
 }
 
@@ -307,24 +310,17 @@ async function extractScUrl(id) {
     )
   } catch (e) {
     const message = String(e.message || e)
-    // A DRM-protected or region-locked upload is permanent for this id. Unlike
-    // before, a 403 no longer poisons the whole catalogue: the API path above
-    // carries the traffic, so a yt-dlp burst limit only costs this one track.
+    // yt-dlp is only the fallback now, and its failures say nothing durable
+    // about the upload: a 403 is a burst limit, a timeout is the network. Never
+    // mark the id denied here — that is what previously poisoned good tracks
+    // for the rest of the process. Throttle and move on.
     if (/403|forbidden|rate limit|temporarily unavailable/i.test(message)) {
       scBlockedUntil = Date.now() + 60 * 1000
-      return null
     }
-    scDenied.add(id)
     return null
   }
   const [url, formatId] = out.split('\n').map((l) => l.trim()).find(Boolean)?.split('\t') ?? []
-  // Check the format name as well as the selector: if SoundCloud ever stops
-  // tagging its 30-second clips with "preview", a selector alone would quietly
-  // start serving them as full songs again.
-  if (!url || /preview/i.test(formatId || '')) {
-    scDenied.add(id)
-    return null
-  }
+  if (!url || /preview/i.test(formatId || '')) return null
   urlCache.set(`sc:${id}`, { url, expires: Date.now() + URL_TTL })
   return url
 }
@@ -339,10 +335,61 @@ async function extractScUrl(id) {
 async function scApiSearch(query, n) {
   const cid = await scGetClientId()
   if (!cid) throw new Error('no client id')
-  const data = await scHttp(
-    `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${cid}&limit=${n}`,
-  )
-  const collection = (data && data.collection) || []
+  // Ask for far more than we return. Licensed uploads dominate the head of
+  // most result sets — "lofi" answers MONETIZE for its first three — so
+  // filtering a short page leaves nothing at all. Over-fetch, then keep the
+  // playable subset and cut it back to what the caller wanted.
+  const fetchN = Math.min(Math.max(n * 8, 30), 60)
+  const page = async (q) => {
+    const data = await scHttp(
+      `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(q)}&client_id=${cid}&limit=${fetchN}`,
+    )
+    return (data && data.collection) || []
+  }
+  let kept = playableFrom(await page(query))
+  // A broad one-word query can be licensed end to end: SoundCloud's own first
+  // fifty hits for "lofi" are all MONETIZE, so a strict filter would show an
+  // empty page for a word that clearly has music behind it. Broaden once or
+  // twice — the same search the listener would have typed next — before
+  // giving up, so the page is never blank when a playable answer exists.
+  if (!kept.length) {
+    for (const widened of [`${query} mix`, `${query} beats`]) {
+      kept = playableFrom(await page(widened))
+      if (kept.length) break
+    }
+  }
+  // Even an ALLOW upload is not guaranteed to play: many carry only HLS
+  // transcodings, which a plain <audio> element cannot decode. The search
+  // response does not say which is which, so probe the leading candidates and
+  // keep only the ones with a progressive stream. The probe doubles as a warm
+  // cache, so the track a listener clicks is already resolved.
+  if (kept.length && Date.now() >= scApiBrokenUntil) {
+    const candidates = kept.slice(0, 15)
+    const playable = await probeProgressive(candidates.map((i) => i.id))
+    // If the probe found nothing the API layer is probably having a bad day,
+    // not the whole catalogue; trust the policy filter rather than go blank.
+    if (playable.size) kept = kept.filter((i) => playable.has(i.id))
+  }
+  return kept.slice(0, n)
+}
+
+/** Resolve up to `limit` ids at a time, returning the set that has audio. */
+async function probeProgressive(ids, limit = 6) {
+  const ok = new Set()
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < ids.length) {
+      const id = ids[cursor++]
+      const url = await scUrlFor(id).catch(() => null)
+      if (url) ok.add(id)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, ids.length) }, worker))
+  return ok
+}
+
+/** Filter a raw api-v2 page down to what an anonymous listener may stream. */
+function playableFrom(collection) {
   return collection
     .filter((t) => t && t.streamable !== false && t.policy !== 'MONETIZE')
     .map((t) => ({
@@ -367,8 +414,9 @@ async function scSearchDirect(prefix, query, n, need = 4) {
   let listed = []
   try {
     listed = await scApiSearch(query, n)
-  } catch {
+  } catch (e) {
     // api-v2 unavailable (client_id scrape failed) — fall back to the extractor.
+    console.log(`[monochrome]   ↳ sc api search failed: ${String((e && e.message) || e).slice(0, 80)}`)
     listed = await scFlatSearch(prefix, query, n)
   }
   if (listed.length && Date.now() >= scBlockedUntil) {

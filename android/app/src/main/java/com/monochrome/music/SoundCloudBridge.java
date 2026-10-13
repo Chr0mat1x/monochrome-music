@@ -122,11 +122,24 @@ public class SoundCloudBridge {
 
     private String search(String query, String id) throws Exception {
         if (id == null) return "[]";
+        // Over-fetch: licensed (MONETIZE) uploads dominate the head of most
+        // result sets, so a short page can filter down to nothing. SoundCloud's
+        // first fifty hits for "lofi" are all licensed, so a bare query also
+        // gets broadened once before we accept an empty answer.
+        JSONArray out = page(query, id, 50);
+        if (out.length() == 0) {
+            out = page(query + " mix", id, 50);
+            if (out.length() == 0) out = page(query + " beats", id, 50);
+        }
+        return out.toString();
+    }
+
+    private JSONArray page(String query, String id, int limit) throws Exception {
         String body = get("https://api-v2.soundcloud.com/search/tracks?q="
-                + URLEncoder.encode(query, "UTF-8") + "&client_id=" + id + "&limit=20");
+                + URLEncoder.encode(query, "UTF-8") + "&client_id=" + id + "&limit=" + limit);
         JSONArray collection = new JSONObject(body).optJSONArray("collection");
         JSONArray out = new JSONArray();
-        if (collection == null) return out.toString();
+        if (collection == null) return out;
         for (int i = 0; i < collection.length(); i++) {
             JSONObject t = collection.optJSONObject(i);
             if (t == null) continue;
@@ -148,7 +161,7 @@ public class SoundCloudBridge {
             item.put("policy", policy);
             out.put(item);
         }
-        return out.toString();
+        return out;
     }
 
     private String clientId() throws Exception {
