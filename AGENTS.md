@@ -1,7 +1,7 @@
 # MONOCHROME — AGENTS.md
 
 ## Session snapshot (2026-10-08)
-Work is committed on `master` (HEAD `479b4ed`), pushed to `origin/main`.
+Work is committed on `master` (HEAD `beef528`), pushed to `origin/main`.
 - Full-length playback: SoundCloud via `api-v2.soundcloud.com` (server-side
   proxy at `/api`); a playability probe keeps only tracks that actually stream.
   Your machine's proxy handles it, the hosted site streams through `/api`.
@@ -12,6 +12,10 @@ Work is committed on `master` (HEAD `479b4ed`), pushed to `origin/main`.
   Hits" compilations, hour-long DJ sets, `.wav` placeholders, sub-45s clips —
   on Home, Search and the mood generator.
 - To resume locally: `npm run dev` (starts the yt-dlp proxy + Vite on :12000).
+- Mobile gestures: swipe left/right on the content to move between the five
+  tabs (`lib/useSwipeTabs`, wired in `App.tsx`). The APK has no companion
+  server, so SoundCloud goes through the native bridge, which now probes
+  each result for a progressive stream before listing it.
 - A container restart wipes the toolchain. `scripts/bootstrap.sh` restores all
   of it in one shot — yt-dlp, JDK 21 at `/home/openhands/jdk` (Temurin),
   Android SDK at `/home/openhands/android-sdk` — and prints the exports to use.
@@ -44,6 +48,16 @@ runs full-screen on a phone from the home screen.
   production builds only, so `npm run dev` is never served stale.
 - Layout is mobile-first: `MobileNav` (bottom tabs) on small screens, the
   desktop sidebar from `lg` up; the top-level shell is a column on phones.
+- Swipe navigation: a horizontal flick on the content moves one tab in
+  bottom-nav order (`lib/useSwipeTabs`, wired in `App.tsx`; `TAB_PATHS` is the
+  order). Only clearly horizontal gestures count — 60px minimum and the
+  horizontal component must dominate — so vertical scrolling, horizontal
+  carousels and the seek bar keep working. It is a no-op above `lg` (the
+  sidebar is the navigation there) and on non-tab routes. The page wrapper's
+  animation must end at `transform: none`: a lingering transform makes it the
+  containing block for the `position: fixed` overlays rendered inside it
+  (track menu, now-playing), which would then anchor to the page, not the
+  screen.
 - Safe areas: the app root, both players and the bottom nav use
   `env(safe-area-inset-*)`; the shell is `h-[100dvh]` so the URL bar cannot
   clip the player. The `Player` has a compact seek row on phones.
@@ -282,6 +296,18 @@ runs full-screen on a phone from the home screen.
   expires, so the native path deliberately bypasses `resolveCache`.
   Gotcha: SoundCloud serves a *script-free* page to mobile user-agents, which
   hides the client id — the bridge must scrape with a desktop UA.
+  The bridge must also run the same playability probe the server does, for
+  the same reason: it may only list tracks it has confirmed carry a
+  progressive stream, or the user taps a row that never plays. The search
+  response cannot be filtered by inspection — it reports HLS for
+  everything, including uploads that do have a progressive stream — so
+  `probe()` fetches each leading candidate’s own `/tracks/{id}` record
+  (which does list the progressive transcoding) in parallel. If the probe
+  confirms nothing, fall back to the policy-filtered list, on the
+  assumption that the API layer is degraded rather than the whole
+  catalogue being HLS-only. `hasAudioServer()` returns false immediately
+  inside the shell: there is no companion server, and `/api/health` would
+  otherwise hit the asset loader.
 - **Liquid glass UI.** Surfaces are frosted panes (`.glass`, `.glass-strong`,
   `.glass-menu`) with a hairline rim, an inner top highlight and a real
   `backdrop-filter` blur — plus `-webkit-backdrop-filter` for iOS. The top bar
