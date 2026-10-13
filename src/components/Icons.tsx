@@ -22,6 +22,12 @@ export const IconSearch = (p: P) => (
 export const IconLibrary = (p: P) => (
   <svg {...base(p)}><path d="M4 4v16M9 4v16" /><path d="m14 5 5 14" /></svg>
 )
+export const IconSettings = (p: P) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M12 2.5v2.2M12 19.3v2.2M21.5 12h-2.2M4.7 12H2.5M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6M18.7 18.7l-1.6-1.6M6.9 6.9 5.3 5.3" />
+  </svg>
+)
 export const IconPlus = (p: P) => (
   <svg {...base(p)}><path d="M12 5v14M5 12h14" /></svg>
 )

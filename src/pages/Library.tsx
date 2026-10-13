@@ -4,9 +4,10 @@ import { useStore } from '../store/useStore'
 import { Cover } from '../components/Cover'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { MediaCard } from '../components/MediaCard'
+import { SettingsPanel } from '../components/SettingsPanel'
 import { IconHeart, IconPlay, IconPlus } from '../components/Icons'
 
-type Tab = 'liked' | 'playlists' | 'recent'
+type Tab = 'liked' | 'playlists' | 'recent' | 'settings'
 
 export function Library() {
   const [tab, setTab] = useState<Tab>('liked')
@@ -34,6 +35,7 @@ export function Library() {
             ['liked', `Избранное · ${liked.length}`],
             ['playlists', `Плейлисты · ${playlists.length}`],
             ['recent', `Недавно · ${recentlyPlayed.length}`],
+            ['settings', 'Настройки'],
           ] as const
         ).map(([k, label]) => (
           <button key={k} className={`chip ${tab === k ? 'chip-active' : ''}`} onClick={() => setTab(k)}>
@@ -105,6 +107,12 @@ export function Library() {
               ))}
             </>
           )}
+        </div>
+      )}
+
+      {tab === 'settings' && (
+        <div className="mt-6 max-w-xl">
+          <SettingsPanel />
         </div>
       )}
     </div>

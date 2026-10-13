@@ -17,6 +17,7 @@ import { ArtistPage } from './pages/ArtistPage'
 import { PlaylistPage } from './pages/PlaylistPage'
 import { SharedPage } from './pages/SharedPage'
 import { LikedSongs } from './pages/LikedSongs'
+import { SettingsPage } from './pages/SettingsPage'
 import { NotFound } from './pages/NotFound'
 
 /** Tabs in bottom-nav order; a swipe moves one step through this list. */
@@ -96,6 +97,7 @@ export default function App() {
                 <Route path="/playlist/:id" element={<PlaylistPage />} />
                 <Route path="/s/:payload" element={<SharedPage />} />
                 <Route path="/liked" element={<LikedSongs />} />
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/auth" element={<AuthPanel />} />
                 <Route path="/home" element={<Navigate to="/" replace />} />
                 <Route path="*" element={<NotFound />} />

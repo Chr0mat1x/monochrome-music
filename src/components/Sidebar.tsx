@@ -2,7 +2,7 @@ import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore'
 import { Cover } from './Cover'
 import { ThemeToggle } from './ThemeToggle'
-import { IconHeart, IconHome, IconLibrary, IconPlus, IconSearch, IconSparkles, IconUser, IconWave } from './Icons'
+import { IconHeart, IconHome, IconLibrary, IconPlus, IconSearch, IconSettings, IconSparkles, IconUser, IconWave } from './Icons'
 
 const navItem = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-200 ${
@@ -43,6 +43,9 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           </NavLink>
           <NavLink to="/library" className={navItem} onClick={onClose}>
             <IconLibrary width={19} height={19} /> Медиатека
+          </NavLink>
+          <NavLink to="/settings" className={navItem} onClick={onClose}>
+            <IconSettings width={19} height={19} /> Настройки
           </NavLink>
         </nav>
 

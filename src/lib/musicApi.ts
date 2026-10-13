@@ -1,5 +1,6 @@
 import type { Album, Artist, Source, Track } from '../types'
 import { hasNativeBridge, nativeResolveSoundCloud, nativeSearchSoundCloud } from './nativeBridge'
+import { audioServerBase, serverConfigured } from './serverConfig'
 
 /* ------------------------------------------------------------------ *
  * Three live, CORS-enabled catalogues:
@@ -71,7 +72,7 @@ export function catalogueProxied(): Promise<boolean> {
 }
 
 function proxied(url: string): string {
-  return `${AUDIO_SERVER}/proxy?url=${encodeURIComponent(url)}`
+  return `${AUDIO_SERVER()}/proxy?url=${encodeURIComponent(url)}`
 }
 
 /**
@@ -537,7 +538,7 @@ export async function resolveAudiusStream(trackId: string): Promise<string | nul
   const host = await audiusHost()
   const direct = `${host}/v1/tracks/${trackId}/stream?app_name=${APP_NAME}`
   if (!(await catalogueProxied())) return direct
-  const data = await jsonFetch<{ url?: string }>(`${AUDIO_SERVER}/audio-url?url=${encodeURIComponent(direct)}`, 9000)
+  const data = await jsonFetch<{ url?: string }>(`${AUDIO_SERVER()}/audio-url?url=${encodeURIComponent(direct)}`, 9000)
   return data?.url ?? null
 }
 
@@ -650,7 +651,7 @@ async function serverSearch(
 ): Promise<ServerSearchItem[]> {
   if (!(await hasAudioServer())) return []
   const data = await jsonFetch<{ items?: ServerSearchItem[] }>(
-    `${AUDIO_SERVER}/search?src=${src}&q=${encodeURIComponent(query)}&limit=${limit}`,
+    `${AUDIO_SERVER()}/search?src=${src}&q=${encodeURIComponent(query)}&limit=${limit}`,
     20000,
   )
   return data?.items ?? []
@@ -1192,23 +1193,37 @@ export async function prefetchFullTracks(tracks: Track[], concurrency = 2): Prom
  * the official IFrame player (which works from residential IPs).
  * ------------------------------------------------------------------ */
 /**
- * Base URL of the companion server. On the web it is a same-origin `/api`
- * (Vite proxies it in dev). The bundled Android app has no server of its own,
- * so it is pointed at a real deployment through `VITE_MONO_SERVER` at build
- * time — without that, a phone on a network that blocks SoundCloud and the
- * catalogues has nothing to play at all.
+ * Base URL of the companion server, re-read on every call so a server entered
+ * in Settings takes effect without a reload. On the web it is usually a
+ * same-origin `/api` (Vite proxies it in dev); the bundled Android app has no
+ * server of its own, so it is pointed at a real deployment — without that, a
+ * phone on a network that blocks SoundCloud and the catalogues has nothing to
+ * play at all. See `serverConfig.ts`.
  */
-const AUDIO_SERVER = (import.meta.env.VITE_MONO_SERVER as string | undefined)?.replace(/\/$/, '') || '/api'
+const AUDIO_SERVER = () => audioServerBase()
 
 let audioServerUp: boolean | null = null
 let audioServerProbe: Promise<boolean> | null = null
 
+/**
+ * Forget the remembered server verdict. Called after the user changes the
+ * server address in Settings: the old probe (and its cached result) describes
+ * the previous server, not the new one.
+ */
+export function resetAudioServerCache(): void {
+  audioServerUp = null
+  audioServerProbe = null
+  ytServerBlocked = false
+}
+
 /** Probe the companion server once per session. */
 export function hasAudioServer(): Promise<boolean> {
-  // The offline APK has no companion server; the native bridge covers
+  // The offline APK has no server of its own; the native bridge covers
   // SoundCloud instead. Probing anyway would hit the asset loader (a 404 for
-  // /api/health) and cost a pointless round trip on every start.
-  if (hasNativeBridge()) {
+  // /api/health) and cost a pointless round trip on every start. But if the
+  // user (or the build) pointed the app at a real deployment, probe it — that
+  // server is what makes full-length playback work where the CDNs are blocked.
+  if (hasNativeBridge() && !serverConfigured()) {
     audioServerUp = false
     return Promise.resolve(false)
   }
@@ -1218,7 +1233,7 @@ export function hasAudioServer(): Promise<boolean> {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 2500)
     try {
-      const res = await fetch(`${AUDIO_SERVER}/health`, { signal: ctrl.signal })
+      const res = await fetch(`${AUDIO_SERVER()}/health`, { signal: ctrl.signal })
       audioServerUp = res.ok
     } catch {
       audioServerUp = false
@@ -1275,10 +1290,10 @@ async function resolveViaServer(sourceId: string, src: 'yt' | 'sc', attempts = 4
   for (let i = 0; i < attempts; i++) {
     if (!(await hasAudioServer())) return null
     const data = await jsonFetch<{ ok?: boolean; denied?: boolean; blocked?: boolean }>(
-      `${AUDIO_SERVER}/resolve?src=${src}&id=${sourceId}`,
+      `${AUDIO_SERVER()}/resolve?src=${src}&id=${sourceId}`,
       8000,
     )
-    if (data?.ok) return `${AUDIO_SERVER}/audio?src=${src}&id=${sourceId}`
+    if (data?.ok) return `${AUDIO_SERVER()}/audio?src=${src}&id=${sourceId}`
     // `denied` is permanent for this upload and `blocked` is a property of the
     // whole server, so neither is worth retrying. Anything else means the
     // extractor is still working — give it a moment and ask again.
@@ -1335,7 +1350,7 @@ async function flushWarmBatch() {
   // Ask the server to start resolving and return immediately. The old call
   // waited for the whole batch (up to 40s), which is exactly the stall the
   // upgrade path was meant to avoid.
-  void fetch(`${AUDIO_SERVER}/warm?ids=${ids.join(',')}`).catch(() => {})
+  void fetch(`${AUDIO_SERVER()}/warm?ids=${ids.join(',')}`).catch(() => {})
 }
 
 /* ------------------------------------------------------------------ *

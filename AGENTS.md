@@ -1,7 +1,7 @@
 # MONOCHROME — AGENTS.md
 
 ## Session snapshot (2026-10-08)
-Work is committed on `master` (HEAD `beef528`), pushed to `origin/main`.
+Work is committed on `master` (HEAD `208e09d`), pushed to `origin/main`.
 - Full-length playback: SoundCloud via `api-v2.soundcloud.com` (server-side
   proxy at `/api`); a playability probe keeps only tracks that actually stream.
   Your machine's proxy handles it, the hosted site streams through `/api`.
@@ -16,6 +16,22 @@ Work is committed on `master` (HEAD `beef528`), pushed to `origin/main`.
   tabs (`lib/useSwipeTabs`, wired in `App.tsx`). The APK has no companion
   server, so SoundCloud goes through the native bridge, which now probes
   each result for a progressive stream before listing it.
+- **Companion server address (`lib/serverConfig.ts`).** The APK has no
+  server of its own, and on a network that blocks the music CDNs the phone
+  cannot reach them either — so the app can be pointed at a deployment and
+  will stream *through* it. The address is read on every call (so it takes
+  effect without a reload) from `localStorage['mono.server']`, falling back
+  to the build-time `VITE_MONO_SERVER`. Users set it in Настройки
+  (`SettingsPanel`, also a `/settings` page and a Library tab); the panel
+  probes `/api/health` on save and reports whether the server answers.
+  `hasAudioServer()` no longer short-circuits to false inside the shell when
+  an address is configured — that server is the whole point there. The
+  build bakes one in via `MONO_SERVER_URL` (see `scripts/build-apk.sh`).
+  Bare addresses are normalized to https, except private/LAN hosts
+  (`localhost`, `10.*`, `192.168.*`, `172.16-31.*`, `*.local`), which get
+  http — the usual way to run the server on your own computer. Non-http(s)
+  schemes are rejected. The server already sends `access-control-allow-origin:
+  *`, so the WebView (an `appassets.androidplatform.net` origin) can call it.
 - A container restart wipes the toolchain. `scripts/bootstrap.sh` restores all
   of it in one shot — yt-dlp, JDK 21 at `/home/openhands/jdk` (Temurin),
   Android SDK at `/home/openhands/android-sdk` — and prints the exports to use.
@@ -27,7 +43,7 @@ Work is committed on `master` (HEAD `beef528`), pushed to `origin/main`.
   bot" for anonymous datacenter IPs; SoundCloud is the reliable full-song path.
   On a phone/home IP the YouTube IFrame player works.
 - Live links: site https://work-1-bcnpsrwlxctxiqwy.prod-runtime.all-hands.dev/ ,
-  APK at …/MONOCHROME.apk (served from `downloads/`, versionCode 3 / 1.2).
+  APK at …/MONOCHROME.apk (served from `downloads/`, versionCode 4 / 1.3).
 
 ## What this is
 A Spotify-style music web app with a strict black-and-white design. There is
@@ -70,7 +86,9 @@ runs full-screen on a phone from the home screen.
   come from SoundCloud (which streams from any IP). A static `dist` served
   without Vite has no proxy, so set `MONO_SERVER_URL` to the computer's LAN
   address at build time in that case. The bundled APK has no server of its
-  own, so it falls back to the YouTube IFrame player for full tracks.
+  own either, but it can be pointed at one: bake the address in with
+  `MONO_SERVER_URL`, or type it in Настройки on the phone. Without that it
+  falls back to the YouTube IFrame player for full tracks.
 
 ## Commands
 - `npm run build:apk` — builds an installable, debug-signed Android APK

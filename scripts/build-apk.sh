@@ -10,7 +10,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 echo "==> Building web bundle"
-npm run build
+# The APK has no server of its own; bake in the deployment to stream through so
+# it plays on networks that block the music CDNs. Override with MONO_SERVER_URL.
+if [ -n "${MONO_SERVER_URL:-}" ]; then
+  echo "    companion server: $MONO_SERVER_URL"
+  VITE_MONO_SERVER="$MONO_SERVER_URL" npm run build
+else
+  npm run build
+fi
 
 echo "==> Bundling web assets into the Android app"
 rm -rf android/app/src/main/assets
