@@ -74,6 +74,18 @@ body {
   overflow: hidden;
 }
 
+/* Height of the app shell.
+ *
+ * `100vh` is the fallback, and it is load-bearing: an older Android WebView
+ * does not know `dvh`, so a lone `height:100dvh` is dropped, the shell falls
+ * back to `auto`, grows to its content, and the body's `overflow:hidden` then
+ * clips it — the page looks right but nothing scrolls. Declaring `100vh` first
+ * means a definite height always exists. */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
 /* ---------- scrollbars ---------- */
 ::-webkit-scrollbar {
   width: 10px;

@@ -57,7 +57,7 @@ export default function App() {
   const { ref, dir } = useSwipeTabs(onSwipe)
 
   return (
-    <div className="flex h-[100dvh] w-screen flex-col gap-2 p-2 lg:flex-row">
+    <div className="app-shell flex w-screen flex-col gap-2 p-2 lg:flex-row">
       {/* flat backdrop; the panes carry the design */}
       <div className="mono-ambient" aria-hidden="true" />
 
@@ -80,7 +80,10 @@ export default function App() {
         </div>
       )}
 
-      <main className="flex min-w-0 flex-1 flex-col gap-2">
+      {/* min-h-0 lets this column actually shrink to the shell: without it a
+          flex item's min-height is `auto`, so main grows to its content and the
+          body clips the overflow — the layout looks fine but never scrolls. */}
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
         <div className="glass relative min-h-0 flex-1 overflow-hidden rounded-2xl grain">
           <div id="main-scroll" ref={ref} className="h-full overflow-y-auto">
             <TopBar onOpenNav={() => setNavOpen(true)} />

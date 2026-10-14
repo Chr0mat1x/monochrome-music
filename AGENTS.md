@@ -43,7 +43,7 @@ Work is committed on `master` (HEAD `7a0d1bd`), pushed to `origin/main`.
   bot" for anonymous datacenter IPs; SoundCloud is the reliable full-song path.
   On a phone/home IP the YouTube IFrame player works.
 - Live links: site https://work-1-bcnpsrwlxctxiqwy.prod-runtime.all-hands.dev/ ,
-  APK at …/MONOCHROME.apk (served from `downloads/`, versionCode 4 / 1.3).
+  APK at …/MONOCHROME.apk (served from `downloads/`, versionCode 5 / 1.4).
 
 ## What this is
 A Spotify-style music web app with a strict black-and-white design. There is
@@ -75,8 +75,15 @@ runs full-screen on a phone from the home screen.
   (track menu, now-playing), which would then anchor to the page, not the
   screen.
 - Safe areas: the app root, both players and the bottom nav use
-  `env(safe-area-inset-*)`; the shell is `h-[100dvh]` so the URL bar cannot
-  clip the player. The `Player` has a compact seek row on phones.
+  `env(safe-area-inset-*)`; the shell height comes from `.app-shell`
+  (`100vh` then `100dvh`) so the URL bar cannot clip the player. The `Player`
+  has a compact seek row on phones.
+- **Scrolling:** the shell must have a *definite* height, and every flex item
+  between it and `#main-scroll` needs `min-h-0`. A flex item's default
+  `min-height:auto` lets `<main>` grow to its content; the shell is then
+  overfull and `body{overflow:hidden}` clips the bottom — the page renders
+  correctly but nothing scrolls. `.app-shell` keeps the `100vh` fallback for
+  older Android WebViews that drop `100dvh`.
 - `scripts/gen-icons.mjs` regenerates `public/*.png` (no image deps — writes
   PNGs via `zlib`). Run it after changing the brand mark.
 - Full-length audio on a phone: open the app from the phone over the LAN at
