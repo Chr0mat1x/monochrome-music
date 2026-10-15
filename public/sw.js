@@ -1,7 +1,7 @@
 /* MONOCHROME service worker — app-shell caching so the phone can install and
  * reopen the UI offline. Audio (/api) and cross-origin API calls always go to
  * the network; this only caches the shell and hashed build assets. */
-const CACHE = 'monochrome-v9'
+const CACHE = 'monochrome-v10'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png']
 
 /**

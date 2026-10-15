@@ -1,10 +1,21 @@
 # MONOCHROME — AGENTS.md
 
 ## Session snapshot (2026-10-08)
-Work is committed on `master` (HEAD `7a0d1bd`), pushed to `origin/main`.
+Work is committed on `master` (HEAD `6279c9a`), pushed to `origin/main`.
 - Full-length playback: SoundCloud via `api-v2.soundcloud.com` (server-side
   proxy at `/api`); a playability probe keeps only tracks that actually stream.
   Your machine's proxy handles it, the hosted site streams through `/api`.
+- **SoundCloud HLS.** SoundCloud no longer serves progressive MP3 for most
+  uploads — api-v2 hands out HLS manifests only, and even `policy: MONETIZE`
+  (licensed) tracks now carry an anonymous stream. The server resolves a track
+  to a *descriptor* (`{type:'progressive'|'hls', url}`), and for HLS it stitches
+  the fMP4 segments (`init.mp4` + `dataNNN.m4s`) into one MP4 under
+  `$TMPDIR/monochrome-hls/<id>.mp4`, served with byte ranges so seeking works
+  without HLS.js. `resolve` only probes the first segment (cheap), while
+  `audio` performs the build on first play. DRM renditions (`*-encrypted-hls`)
+  are rejected. Do not reintroduce a `policy === 'MONETIZE'` filter in
+  `playableFrom()` — it silently emptied the catalogue, since MONETIZE tracks
+  lead nearly every query.
 - Artist pages pull up to 100 Deezer tracks, deduped to studio editions, 50 rows.
 - Mood generator reads the description (`src/lib/moodPlanner.ts`) and composes
   queries; live profile preview as you type.
