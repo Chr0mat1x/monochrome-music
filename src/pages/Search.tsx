@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { Track } from '../types'
-import { searchAll, isPlayableTrack, preferOriginals, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
+import { searchAll, isPlayableTrack, preferOriginals, prefetchFullTracks, subscribeFullTracks, subscribeSearchExtra } from '../lib/musicApi'
 import { useStore } from '../store/useStore'
 import { MediaCard } from '../components/MediaCard'
 import { TrackRow, TrackListHeader, SourceBadge } from '../components/TrackRow'
@@ -74,6 +74,21 @@ export function Search() {
       setResults((cur) => cur.map((t) => (t.id === full.id ? full : t)))
     })
   }, [])
+
+  // SoundCloud and YouTube arrive after the catalogue hits, so the list is
+  // replaced when the fuller result set is published. `busy` is cleared at the
+  // same time — it tracks the whole search, not just the first response.
+  const queryRef = useRef(query)
+  queryRef.current = query
+  useEffect(() => {
+    return subscribeSearchExtra((q, tracks) => {
+      if (q !== queryRef.current) return
+      const merged = preferOriginals(tracks.filter(isPlayableTrack))
+      setResults(merged)
+      register(merged)
+      setBusy(false)
+    })
+  }, [register])
 
   const albums = useMemo(() => {
     const map = new Map<string, { id: string; title: string; artist: string; art: string | null; tracks: Track[] }>()

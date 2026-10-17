@@ -1,5 +1,6 @@
 import type { Album, Artist, Source, Track } from '../types'
 import { hasNativeBridge, nativeResolveSoundCloud, nativeSearchSoundCloud } from './nativeBridge'
+import { scPlayableUrl, scSearch } from './scClient'
 import { audioServerBase, serverConfigured } from './serverConfig'
 
 /* ------------------------------------------------------------------ *
@@ -690,6 +691,12 @@ export async function searchSoundCloud(query: string, limit = 25): Promise<Track
         )
     }
   }
+  // Static build (GitHub Pages): no server and no bridge, so the browser talks
+  // to SoundCloud itself through the proxy pool. See scClient.ts.
+  if (!hasNativeBridge()) {
+    const items = await scSearch(query, limit).catch(() => [])
+    if (items.length) return items.map(buildSoundCloudTrack)
+  }
   return []
 }
 
@@ -977,26 +984,57 @@ export async function searchAll(query: string, limit = 40, soundcloud = false): 
   const hit = searchCache.get(key)
   if (hit && Date.now() - hit.at < SEARCH_TTL) return hit.tracks
 
-  const sources: Promise<Track[]>[] = [searchDeezer(query, limit), searchItunes(query, limit), searchAudius(query, limit)]
-  if (soundcloud) sources.push(searchSoundCloud(query, limit), searchYouTube(query, limit))
-  const batches = await Promise.all(sources.map((p) => p.catch(() => [])))
+  const fast = [searchDeezer(query, limit), searchItunes(query, limit), searchAudius(query, limit)]
+  const batches = await Promise.all(fast.map((p) => p.catch(() => [])))
+  const out = mergeBatches(batches, limit)
+  if (out.length) searchCache.set(key, { tracks: out, at: Date.now() })
 
+  // SoundCloud and YouTube answer through third-party proxies / an extractor
+  // and can take many seconds, so they are not awaited here. Publishing the
+  // catalogue hits first keeps the search page instant; the slower sources are
+  // merged in when they arrive and announced so the list grows in place.
+  if (soundcloud) {
+    void Promise.all([
+      searchSoundCloud(query, limit).catch(() => []),
+      searchYouTube(query, limit).catch(() => []),
+    ]).then((extra) => {
+      const merged = mergeBatches([out, ...extra], limit)
+      if (merged.length <= out.length) return
+      searchCache.set(key, { tracks: merged, at: Date.now() })
+      for (const cb of searchExtraListeners) cb(query, merged)
+    })
+  }
+  return out
+}
+
+/** Interleave source batches, dropping duplicates, up to `limit` tracks. */
+function mergeBatches(batches: Track[][], limit: number): Track[] {
   const seen = new Set<string>()
   const out: Track[] = []
-  const push = (t?: Track) => {
-    if (!t || out.length >= limit) return
-    const key = `${t.title.toLowerCase()}|${t.artist.toLowerCase()}`
-    if (seen.has(key)) return
-    seen.add(key)
-    out.push(t)
+  const max = Math.max(0, ...batches.map((b) => b.length))
+  for (let i = 0; i < max && out.length < limit; i++) {
+    for (const batch of batches) {
+      if (out.length >= limit) break
+      const t = batch[i]
+      if (!t) continue
+      const dedupe = `${t.title.toLowerCase()}|${t.artist.toLowerCase()}`
+      if (seen.has(dedupe)) continue
+      seen.add(dedupe)
+      out.push(t)
+    }
   }
-
-  const max = Math.max(...batches.map((b) => b.length))
-  for (let i = 0; i < max; i++) {
-    for (const batch of batches) push(batch[i])
-  }
-  if (out.length) searchCache.set(key, { tracks: out, at: Date.now() })
   return out
+}
+
+const searchExtraListeners = new Set<(query: string, tracks: Track[]) => void>()
+
+/**
+ * Subscribe to the late-arriving search sources (SoundCloud, YouTube). Fires
+ * once per search with the query and the re-merged list.
+ */
+export function subscribeSearchExtra(cb: (query: string, tracks: Track[]) => void): () => void {
+  searchExtraListeners.add(cb)
+  return () => searchExtraListeners.delete(cb)
 }
 
 /**
@@ -1234,7 +1272,11 @@ export function hasAudioServer(): Promise<boolean> {
     const timer = setTimeout(() => ctrl.abort(), 2500)
     try {
       const res = await fetch(`${AUDIO_SERVER()}/health`, { signal: ctrl.signal })
-      audioServerUp = res.ok
+      // A static host answers *any* unknown path with index.html and a 200, so
+      // `res.ok` alone would report a server that is not there and send every
+      // catalogue call to a page of HTML. Require the health payload itself.
+      const body = res.ok ? await res.json().catch(() => null) : null
+      audioServerUp = Boolean(body && body.ok === true)
     } catch {
       audioServerUp = false
     } finally {
@@ -1255,6 +1297,14 @@ export function resolveFullAudio(sourceId: string, src: 'yt' | 'sc' = 'yt'): Pro
   // Once the server's IP is refused by YouTube, every further probe is a
   // guaranteed failure that costs seconds. Skip straight to the IFrame player.
   if (src === 'yt' && ytServerBlocked) return Promise.resolve(null)
+
+  // SoundCloud in a static build (e.g. GitHub Pages): there is no companion
+  // server, so the browser resolves the signed URL and stitches HLS itself.
+  // See scClient.ts.
+  if (src === 'sc' && !hasNativeBridge()) {
+    return hasAudioServer().then((up) => (up ? resolveCached(sourceId, src) : resolveScServerless(sourceId)))
+  }
+
   // The server signs *and* proxies SoundCloud audio, so it plays even where
   // SoundCloud's CDN is blocked; the native bridge can only hand back a direct
   // CDN URL, which such a network cannot reach. Prefer the server when present.
@@ -1264,13 +1314,36 @@ export function resolveFullAudio(sourceId: string, src: 'yt' | 'sc' = 'yt'): Pro
       return nativeResolveSoundCloud(sourceId).catch(() => null)
     })
   }
+
+  return resolveCached(sourceId, src)
+}
+
+/**
+ * The one stitched SoundCloud file kept alive in the browser. Each is
+ * megabytes, and a new load means the previous track is done with.
+ */
+let serverlessScBlob: string | null = null
+
+/** Resolve SoundCloud entirely in the browser, with no companion server. */
+async function resolveScServerless(sourceId: string): Promise<string | null> {
+  const playable = await scPlayableUrl(sourceId).catch(() => null)
+  if (!playable) return null
+  if (playable.revoke) {
+    if (serverlessScBlob) URL.revokeObjectURL(serverlessScBlob)
+    serverlessScBlob = playable.url
+  }
+  return playable.url
+}
+
+/** Resolve through the companion server, memoising only successes. */
+function resolveCached(sourceId: string, src: 'yt' | 'sc'): Promise<string | null> {
   const key = `${src}:${sourceId}`
   const hit = resolveCache.get(key)
   if (hit) return hit
   const task = resolveViaServer(sourceId, src)
-  // Only successful resolutions are memoised. A miss usually just means the
-  // server's background extraction has not finished yet, so caching it would
-  // make the track permanently unplayable for the rest of the session.
+  // A miss usually just means the server's background extraction has not
+  // finished yet, so caching it would make the track permanently unplayable
+  // for the rest of the session.
   task.then((url) => {
     if (!url) resolveCache.delete(key)
   })

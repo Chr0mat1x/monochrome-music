@@ -552,3 +552,46 @@ If playback breaks again, check in this order: does `/api/search?src=sc&q=…`
 return items, does `/api/resolve?src=sc&id=…` return `{"ok":true}`, and does
 `policy` filtering still match SoundCloud's current vocabulary.
 
+## Static (server-less) playback — what actually works from a browser
+
+The static build has no `/api`, so the browser talks to SoundCloud itself. What
+was verified end to end, from a headless Chromium on the public internet:
+
+* **The audio CDN allows direct browser fetches.** The HLS manifest and every
+  media segment on `playback.media-streaming.soundcloud.cloud` answer with
+  `Access-Control-Allow-Origin: *`, so the browser downloads the real audio
+  itself and stitches it in memory (`stitchScHls` in `src/lib/scClient.ts`). No
+  server is needed for the audio, only for the three small JSON calls.
+* **SoundCloud HLS is fMP4 and needs the init segment.** The playlist carries
+  `#EXT-X-MAP`; without that first segment the concatenated fragments start
+  with `styp` and no player will open them. `parseMediaPlaylist` must keep it,
+  and `stitchScHls` must fetch it first — the result then starts with `ftyp`
+  and plays. Dropping it was the single bug that made stitched audio silent.
+* **The `client_id` must be baked in, not scraped at runtime.** Scraping
+  `soundcloud.com`'s HTML through public proxies fails — Cloudflare answers the
+  proxies with 5xx and the request just times out, while the `api-v2` JSON
+  endpoints go through fine. `scClient.ts` therefore embeds a known id
+  (overridable with `VITE_SC_CLIENT_ID`) and only scrapes as a repair path.
+  `clientIdAt` is seeded to `Date.now()`: leaving it at `0` makes the very first
+  call look stale and run that futile scrape, which stalls search for ~30s.
+* **Proxies: only one is dependable.** Of the public CORS proxies tried,
+  `https://r.jina.ai/<url>` is the only one that consistently returned the
+  upstream JSON from a browser. It prefixes a `Title: … Markdown Content: {…}`
+  header, so `unwrap` skips to the first brace. `allorigins` (`/raw` and `/get`)
+  and `codetabs` fail intermittently with 408/522. The pool is therefore raced
+  in parallel and the first valid JSON wins.
+* **Search must not block on SoundCloud.** `searchAll` publishes the
+  Deezer/iTunes/Audius hits immediately and merges SoundCloud/YouTube in later
+  via `subscribeSearchExtra`, so the page is usable even when the proxy is slow
+  or down. Previously `searchAll` awaited every source, so one dead proxy left
+  the results empty for the whole timeout.
+* **Static deep links need `404.html`.** GitHub Pages has no rewrites, so
+  `/search?q=…` 404s. `scripts/postbuild.mjs` (run by `npm run build`) copies
+  `index.html` to `404.html` and writes `.nojekyll`.
+
+Verified server-side path (the recommended Amvera deployment, `Dockerfile`,
+port 8787): `/api/search?src=sc` returns real tracks, `/api/resolve?src=sc`
+returns `{"ok":true}`, and `/api/audio?src=sc` streams `audio/mp4` with `206`
+and range support. The server is the more reliable of the two paths; the
+server-less route exists so the site also works on a static host.
+
