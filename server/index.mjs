@@ -145,6 +145,20 @@ async function ytdlp(args) {
 /** Cache of resolved direct URLs: videoId → { url, expires }. */
 const urlCache = new Map()
 const URL_TTL = 20 * 60 * 1000
+/**
+ * SoundCloud signs its media URLs with a short-lived token: the playlist starts
+ * returning `403 Forbidden` after roughly three minutes. Caching one for the
+ * full URL_TTL meant that for most of that window the stitcher fetched an
+ * error page instead of a manifest, so playback broke with "nothing loads"
+ * minutes after the URL was first resolved. Keep this comfortably under the
+ * real expiry and let a stale error force a re-resolve as a backstop.
+ */
+const SC_URL_TTL = 120 * 1000
+
+/** Tag an error as "the signed media URL expired", so callers re-resolve. */
+function staleUrl(message) {
+  return Object.assign(new Error(message), { stale: true })
+}
 
 /**
  * Catalogue hosts this server is allowed to proxy. The browser in some regions
@@ -359,7 +373,7 @@ async function resolveScUrl(id) {
     try {
       const desc = await extractScViaApi(id)
       if (desc) {
-        urlCache.set(`sc:${id}`, { desc, expires: Date.now() + URL_TTL })
+        urlCache.set(`sc:${id}`, { desc, expires: Date.now() + SC_URL_TTL })
         return desc
       }
       // No progressive *and* no HLS: genuinely unplayable anonymously.
@@ -402,7 +416,7 @@ async function extractScUrl(id) {
   const [url, formatId] = out.split('\n').map((l) => l.trim()).find(Boolean)?.split('\t') ?? []
   if (!url || /preview/i.test(formatId || '')) return null
   const desc = /\.m3u8(\?|$)/i.test(url) ? { type: 'hls', url } : { type: 'progressive', url }
-  urlCache.set(`sc:${id}`, { desc, expires: Date.now() + URL_TTL })
+  urlCache.set(`sc:${id}`, { desc, expires: Date.now() + SC_URL_TTL })
   return desc
 }
 
@@ -468,6 +482,20 @@ function parseMediaPlaylist(text) {
   return { init, segments, encrypted }
 }
 
+/** Fetch an HLS manifest, refusing to treat an error page as one. */
+async function fetchManifest(url) {
+  const res = await fetch(url, { headers: { 'user-agent': SC_UA } })
+  const text = await res.text()
+  // A signed media URL past its token returns a bare "Forbidden" body with a
+  // 403. Without this guard that text was parsed as a playlist with one
+  // "segment" called Forbidden, and the failure surfaced as the inscrutable
+  // "Failed to parse URL from Forbidden".
+  if (!res.ok || !text.startsWith('#EXTM3U')) {
+    throw staleUrl(`playlist unavailable (HTTP ${res.status})`)
+  }
+  return text
+}
+
 const hlsBuilds = new Map()
 
 /**
@@ -479,7 +507,7 @@ function buildHls(id, playlistUrl) {
   if (flying) return flying
   const task = (async () => {
     mkdirSync(HLS_DIR, { recursive: true })
-    const pl = await (await fetch(playlistUrl, { headers: { 'user-agent': SC_UA } })).text()
+    const pl = await fetchManifest(playlistUrl)
     const { init, segments, encrypted } = parseMediaPlaylist(pl)
     if (encrypted) throw new Error('hls stream is DRM-encrypted')
     if (!segments.length) throw new Error('empty hls playlist')
@@ -512,6 +540,10 @@ function buildHls(id, playlistUrl) {
         while (cursor < segments.length) {
           const url = segments[cursor++]
           const r = await fetch(url, { headers: { 'user-agent': SC_UA } })
+          // A two-hour mix is hundreds of fragments; on a slow link the signed
+          // URL can expire mid-build and every later fragment returns 403.
+          // Flag it so the caller re-resolves and rebuilds from scratch.
+          if (r.status === 403 || r.status === 410) throw staleUrl(`segment HTTP ${r.status}`)
           if (!r.ok) throw new Error(`segment HTTP ${r.status}`)
           await write(Buffer.from(await r.arrayBuffer()))
         }
@@ -552,7 +584,9 @@ async function ensureHls(id, url) {
  * and that the CDN will serve us.
  */
 async function hlsPlayable(playlistUrl) {
-  const pl = await (await fetch(playlistUrl, { headers: { 'user-agent': SC_UA } })).text()
+  // Throws `stale` when the signed URL has expired, which the caller uses to
+  // drop the cache entry and resolve once more.
+  const pl = await fetchManifest(playlistUrl)
   const { segments, encrypted } = parseMediaPlaylist(pl)
   if (encrypted || !segments.length) return false
   const r = await fetch(segments[0], { headers: { 'user-agent': SC_UA, range: 'bytes=0-1023' } }).catch(() => null)
@@ -750,6 +784,10 @@ async function scResolveMany(ids) {
 async function requirePlayable(url) {
   const probe = await fetch(url, { headers: { range: 'bytes=0-1' } }).catch(() => null)
   if (!probe || !probe.ok || !probe.body) {
+    // 403 means the signed URL's token ran out, not that the track is dead.
+    if (probe && (probe.status === 403 || probe.status === 410)) {
+      throw staleUrl(`stream expired (HTTP ${probe.status})`)
+    }
     throw new Error(`stream unavailable (HTTP ${probe ? probe.status : 'network error'})`)
   }
   probe.body.cancel().catch(() => {})
@@ -817,10 +855,32 @@ async function scDirectUrl(trackId) {
   // Only a freshly extracted URL needs the playability probe. A cached URL was
   // probed when it was first obtained, and re-probing it here would add a round
   // trip to every single play before the audio even starts.
-  if (!(await probeDescriptor(desc).catch(() => false))) {
-    throw new Error('soundcloud stream unavailable')
+  try {
+    if (!(await probeDescriptor(desc))) throw new Error('soundcloud stream unavailable')
+  } catch (e) {
+    if (!e.stale) throw e
+    // The signed URL expired between the cache write and now. Drop it and let
+    // the caller resolve a fresh one rather than replaying a dead link.
+    urlCache.delete(key)
+    throw e
   }
   return desc
+}
+
+/**
+ * Like `scDirectUrl`, but transparently recovers from an expired signature:
+ * the cached URL is dropped and one fresh resolve is attempted. The signed
+ * media URLs last only ~3 minutes, so this is a normal condition rather than
+ * an error, and callers should not have to know about it.
+ */
+async function scDirectUrlFresh(trackId) {
+  try {
+    return await scDirectUrl(trackId)
+  } catch (e) {
+    if (!e.stale) throw e
+    urlCache.delete(`sc:${trackId}`)
+    return scDirectUrl(trackId)
+  }
 }
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
@@ -866,24 +926,44 @@ async function handleAudio(req, res, videoId, source) {
       serveLocalAudio(req, res, hlsPath(videoId))
       return
     }
+    // The signature on a SoundCloud URL expires in minutes, so the resolve and
+    // the stitch can each hit a dead link; `scDirectUrlFresh` re-resolves, and
+    // the stitch is retried once in case it consumed the URL while it lapsed.
     let desc
     try {
-      desc = await scDirectUrl(videoId)
+      desc = await scDirectUrlFresh(videoId)
     } catch (e) {
       res.writeHead(502, { 'content-type': 'text/plain' }).end(String(e.message || e))
       return
     }
     if (desc.type === 'progressive') {
-      streamUpstream(req, res, desc.url)
+      // Same short-lived signature: if the first attempt is refused, drop the
+      // cached URL and stream once more from a fresh resolve.
+      const first = await streamUpstream(req, res, desc.url)
+      if (first !== 'stale') return
+      const fresh = await scDirectUrlFresh(videoId).catch(() => null)
+      if (!fresh) return
+      await streamUpstream(req, res, fresh.url)
       return
     }
-    try {
-      await ensureHls(videoId, desc.url)
-    } catch (e) {
-      res.writeHead(502, { 'content-type': 'text/plain' }).end(`hls build failed: ${String(e.message || e)}`)
-      return
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await ensureHls(videoId, desc.url)
+        serveLocalAudio(req, res, hlsPath(videoId))
+        return
+      } catch (e) {
+        if (!e.stale || attempt === 1) {
+          res.writeHead(502, { 'content-type': 'text/plain' }).end(`hls build failed: ${String(e.message || e)}`)
+          return
+        }
+        urlCache.delete(`sc:${videoId}`)
+        desc = await scDirectUrlFresh(videoId).catch((err) => {
+          res.writeHead(502, { 'content-type': 'text/plain' }).end(String(err.message || err))
+          return null
+        })
+        if (!desc) return
+      }
     }
-    serveLocalAudio(req, res, hlsPath(videoId))
     return
   }
 
@@ -908,8 +988,15 @@ async function streamUpstream(req, res, url, onStale) {
     upstream = null
   }
   if (!upstream || !upstream.ok || !upstream.body) {
+    // 403/410 on a signed media URL means the token lapsed, which the caller
+    // recovers from by re-resolving. Anything else is a genuine failure.
+    const status = upstream ? upstream.status : 0
+    if (status === 403 || status === 410) {
+      res.writeHead(502).end('upstream url expired')
+      return 'stale'
+    }
     res.writeHead(502).end('upstream fetch failed')
-    return
+    return 'failed'
   }
   const headers = {
     'content-type': upstream.headers.get('content-type') || 'audio/mp4',
@@ -925,7 +1012,7 @@ async function streamUpstream(req, res, url, onStale) {
 }
 
 async function handleResolve(res, id, source) {
-  const resolve = source === 'sc' ? scDirectUrl : directUrl
+  const resolve = source === 'sc' ? scDirectUrlFresh : directUrl
   if (source === 'sc' ? !SC_ID.test(id) : !VIDEO_ID.test(id)) {
     res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":"bad id"}')
     return
