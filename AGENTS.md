@@ -57,12 +57,44 @@ Work is committed on `master` (HEAD `6279c9a`), pushed to `origin/main`.
   On a phone/home IP the YouTube IFrame player works.
 - Live links: site https://work-1-bcnpsrwlxctxiqwy.prod-runtime.all-hands.dev/ ,
   APK at …/MONOCHROME.apk (served from `downloads/`, versionCode 5 / 1.4).
+- **The sandbox URL is not permanent.** `bcnpsrwlxctxiqwy` is the workspace id, so
+  the hostname is stable across sessions, but the sandbox only runs while a
+  session is active. A genuinely permanent address needs external hosting.
+- **A permanent host must run a server — static hosting cannot work.**
+  `api-v2.soundcloud.com` sends no `Access-Control-Allow-Origin` and has no JSONP
+  (`&callback=` → 401), so the browser cannot call it directly, and the playback
+  CDN refuses anonymous datacenter requests. GitHub Pages / Netlify / Cloudflare
+  Pages are therefore all non-starters for the web build.
+- **Hosting picks, given the user is in Russia without a VPN.** Cloudflare is
+  blocked there — both `*.workers.dev` and `*.pages.dev` (and much of Cloudflare's
+  IP space) — so Workers/Pages are out. `*.onrender.com` is also unreliable from
+  Russia and Render's free tier sleeps after 15 min. Amvera (Russian PaaS, Docker,
+  paid by Russian card) is the safe choice; see `amvera.yml`.
+- Deployment artifacts already in the repo: `Dockerfile` (Node 22 alpine,
+  `npm ci && vite build`, runtime stage serves `dist/` + `/api`; **no yt-dlp and
+  no ffmpeg**, since `extractScViaApi` + the HLS stitcher are pure HTTP),
+  `.dockerignore`, `render.yaml`, `railway.json`, `amvera.yml`. The server binds
+  `PORT` (what Render/Railway/Fly inject) else `MONO_SERVER_PORT` else 8787, on
+  `MONO_HOST` else `0.0.0.0` — keep `0.0.0.0` so a platform router can reach it.
+  Note the local supervisor exports `MONO_SERVER_PORT=12000`, not `PORT`, so a
+  stray `PORT` in the sandbox env would hijack the public site; it is unset today.
+- The Docker image was verified by building and running it locally: health ok,
+  site 200, search returns tracks, `/api/audio` 206 `audio/mp4` with ranges.
+  GHCR push was refused (`permission_denied`, token lacks `write:packages`), so
+  hosts must build from the repo rather than pull a prebuilt image.
+
 
 ## What this is
-A Spotify-style music web app with a strict black-and-white design. There is
-no backend of our own: the catalogue is fetched live from public music APIs
-and streamed straight into the browser. It ships as an installable PWA so it
-runs full-screen on a phone from the home screen.
+A Spotify-style music web app with a strict black-and-white design. The
+catalogue is fetched live from public music APIs and streamed straight into
+the browser. It ships as an installable PWA so it runs full-screen on a phone
+from the home screen.
+
+The web build does have a small backend of our own (`server/index.mjs`, exposed
+as `/api`): it proxies the catalogue and stitches SoundCloud's HLS into a
+seekable MP4, because the browser cannot call SoundCloud directly (no CORS, no
+JSONP, and the CDN rejects anonymous datacenter requests). The Android APK does
+not use it — the APK talks to SoundCloud through a native Java bridge instead.
 
 ## Stack
 - Vite + React 18 + TypeScript
