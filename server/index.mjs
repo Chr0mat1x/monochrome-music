@@ -12,10 +12,10 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import { Readable } from 'node:stream'
-import { createReadStream, createWriteStream, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, extname, join, normalize } from 'node:path'
 import { getLibrary, login, logout, publicUser, register, setLibrary, userForToken } from './auth.mjs'
 
 const PORT = Number(process.env.MONO_SERVER_PORT || 8787)
@@ -23,7 +23,75 @@ const PORT = Number(process.env.MONO_SERVER_PORT || 8787)
 // The APK lives outside public/ so Vite never bundles it into the web build
 // (which would make each APK contain the previous one). It is served here and
 // proxied by Vite at /MONOCHROME.apk.
-const APK_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'downloads', 'MONOCHROME.apk')
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const APK_PATH = join(ROOT, 'downloads', 'MONOCHROME.apk')
+
+// Serving the built site from this same process means a deployment needs one
+// long-lived process instead of a Vite dev server plus this proxy. Point
+// MONO_WEB_DIR elsewhere to serve a different bundle.
+const WEB_DIR = process.env.MONO_WEB_DIR || join(ROOT, 'dist')
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+}
+
+/**
+ * Resolve a URL path to a file inside WEB_DIR, or null. Anything that escapes
+ * the directory (via `..`) is rejected before it touches the filesystem.
+ */
+function webFile(pathname) {
+  let rel
+  try {
+    rel = decodeURIComponent(pathname)
+  } catch {
+    return null
+  }
+  const target = normalize(join(WEB_DIR, rel))
+  if (target !== WEB_DIR && !target.startsWith(WEB_DIR + '/')) return null
+  return target
+}
+
+function serveWeb(req, res, pathname) {
+  const file = webFile(pathname)
+  if (file && existsSync(file) && statSync(file).isFile()) {
+    // Hashed assets under /assets/ can be cached hard; everything a service
+    // worker or the browser uses to decide *which* assets to load must be
+    // revalidated, or a new deploy stays invisible behind the old cache.
+    const volatile = pathname === '/' || pathname.endsWith('.html') || pathname.endsWith('sw.js') || pathname.endsWith('.webmanifest')
+    res.writeHead(200, {
+      'content-type': MIME[extname(file).toLowerCase()] || 'application/octet-stream',
+      'cache-control': volatile ? 'no-cache' : 'public, max-age=3600',
+    })
+    createReadStream(file).pipe(res)
+    return
+  }
+  // Client-side routing: unknown paths without an extension get the shell so
+  // /search, /artist/... and friends survive a hard refresh.
+  if (!extname(pathname)) {
+    const shell = join(WEB_DIR, 'index.html')
+    if (existsSync(shell)) {
+      res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache' })
+      createReadStream(shell).pipe(res)
+      return
+    }
+  }
+  res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('not found')
+}
 
 /**
  * yt-dlp can be installed several ways, so try the common invocations. The
@@ -417,11 +485,18 @@ function buildHls(id, playlistUrl) {
     if (!segments.length) throw new Error('empty hls playlist')
     const tmp = `${hlsPath(id)}.part`
     const out = createWriteStream(tmp)
+    // One persistent error listener, not one per write. Attaching a fresh
+    // `once('error')` for every fragment leaked a listener per segment, which
+    // tripped MaxListenersExceededWarning and grew the heap for the whole build.
+    let failed = null
+    out.on('error', (e) => {
+      failed = failed || e
+    })
     const write = (buf) =>
       new Promise((resolve, reject) => {
-        if (out.write(buf)) resolve()
-        else out.once('drain', resolve)
-        out.once('error', reject)
+        if (failed) return reject(failed)
+        if (out.write(buf)) return resolve()
+        out.once('drain', () => (failed ? reject(failed) : resolve()))
       })
     try {
       if (init) {
@@ -442,7 +517,11 @@ function buildHls(id, playlistUrl) {
         }
       }
       await Promise.all(Array.from({ length: Math.min(8, segments.length) }, worker))
-      await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())))
+      await new Promise((resolve, reject) => {
+        out.once('finish', resolve)
+        out.once('error', reject)
+        out.end()
+      })
       renameSync(tmp, hlsPath(id))
       pruneHls()
       return hlsPath(id)
@@ -1183,7 +1262,7 @@ const server = createServer(async (req, res) => {
     }
     return
   }
-  res.writeHead(404).end('not found')
+  serveWeb(req, res, url.pathname)
 })
 
 server.listen(PORT, () => {

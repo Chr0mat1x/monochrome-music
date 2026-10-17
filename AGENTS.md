@@ -22,7 +22,9 @@ Work is committed on `master` (HEAD `6279c9a`), pushed to `origin/main`.
 - `isPlayableTrack` (`src/lib/musicApi.ts`) strips catalogue filler — "Top 100
   Hits" compilations, hour-long DJ sets, `.wav` placeholders, sub-45s clips —
   on Home, Search and the mood generator.
-- To resume locally: `npm run dev` (starts the yt-dlp proxy + Vite on :12000).
+- To resume locally: `npm run dev` (starts the yt-dlp proxy + Vite on :12000), or
+  `scripts/start-server.sh` to serve the built `dist/` from the audio server
+  itself (one process, no Vite).
 - Mobile gestures: swipe left/right on the content to move between the five
   tabs (`lib/useSwipeTabs`, wired in `App.tsx`). The APK has no companion
   server, so SoundCloud goes through the native bridge, which now probes
@@ -124,8 +126,15 @@ runs full-screen on a phone from the home screen.
   (`scripts/dev.mjs`); the app is on `0.0.0.0:12000`. Requires `yt-dlp` on the
   machine for full-length playback; without it the app still runs and falls
   back to YouTube's IFrame player.
+- `scripts/start-server.sh` — runs `server/index.mjs` alone on :12000, serving
+  both `/api` and the built `dist/` site from one process. It is idempotent, so
+  `~/.bashrc` calls it on every shell: the sandbox recycles the container often
+  and only the agent server comes back on its own, and this is what brings the
+  site back without a human. It supervises the process (`while true`) and takes
+  a `flock` so two logins cannot start two servers.
 - `npm run dev:web` — Vite only, no audio proxy.
-- `npm run server` — the audio proxy alone (`server/index.mjs`, port 8787).
+- `npm run server` — the audio proxy alone (`server/index.mjs`, port 8787
+  unless `MONO_SERVER_PORT` says otherwise).
 - `npm run build` — `tsc -b` type-check + production build
 - Keep `allowedHosts: true` in `vite.config.ts` so the workspace proxy host is
   accepted, and keep the `/api` proxy entry pointing at the audio server.
