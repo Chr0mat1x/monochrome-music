@@ -999,7 +999,12 @@ export async function searchAll(query: string, limit = 40, soundcloud = false): 
       searchYouTube(query, limit).catch(() => []),
     ]).then((extra) => {
       const merged = mergeBatches([out, ...extra], limit)
-      if (merged.length <= out.length) return
+      // Compare by identity, not by length: the catalogue usually already fills
+      // `limit`, so an interleaved list can be the same length while containing
+      // tracks the page has never seen. A length check silently dropped every
+      // SoundCloud result in exactly that case.
+      const known = new Set(out.map((t) => t.id))
+      if (!merged.some((t) => !known.has(t.id))) return
       searchCache.set(key, { tracks: merged, at: Date.now() })
       for (const cb of searchExtraListeners) cb(query, merged)
     })

@@ -110,7 +110,11 @@ function unwrap(text: string): unknown {
  * fail, which the callers treat as "no answer", not as an error.
  */
 async function scApi<T = any>(path: string, timeoutMs = 20000): Promise<T | null> {
-  const url = `${API}${path}`
+  // Transcoding URLs come back absolute (`https://api-v2.soundcloud.com/media/…`)
+  // while every other call passes a path. Prepending the base unconditionally
+  // produced `https://api-v2.soundcloud.comhttps://api-v2.soundcloud.com/…`,
+  // which SoundCloud answers with 422.
+  const url = path.startsWith('http') ? path : `${API}${path}`
   const controllers = PROXIES.map(() => new AbortController())
   const timer = setTimeout(() => controllers.forEach((c) => c.abort()), timeoutMs)
 
@@ -268,7 +272,8 @@ export async function resolveScMedia(id: string): Promise<ScMedia | null> {
   const hls = plainHls.find((t) => t.preset === 'aac_160k') || plainHls[0]
   const pick = progressive || hls
   if (!pick) return null
-  const resolved = await scApi<{ url?: string }>(`${pick.url}?client_id=${cid}`)
+  const mediaPath = pick.url.includes('?') ? `${pick.url}&client_id=${cid}` : `${pick.url}?client_id=${cid}`
+  const resolved = await scApi<{ url?: string }>(mediaPath)
   if (!resolved?.url) return null
   return {
     url: resolved.url,

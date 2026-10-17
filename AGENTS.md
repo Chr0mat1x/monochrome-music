@@ -588,6 +588,24 @@ was verified end to end, from a headless Chromium on the public internet:
 * **Static deep links need `404.html`.** GitHub Pages has no rewrites, so
   `/search?q=…` 404s. `scripts/postbuild.mjs` (run by `npm run build`) copies
   `index.html` to `404.html` and writes `.nojekyll`.
+* **Absolute transcoding URLs must not be re-prefixed.** `media.transcodings[]`
+  entries carry an absolute `https://api-v2.soundcloud.com/media/…` URL, while
+  every other `scApi` call passes a path. Prepending `API` unconditionally built
+  `https://api-v2.soundcloud.comhttps://api-v2.soundcloud.com/…`, which
+  SoundCloud rejects with **HTTP 422** — the symptom was rows appearing but
+  playback never starting. `scApi` now only prefixes relative paths.
+* **The late-merge guard compares ids, not length.** `searchAll` publishes the
+  catalogue hits first and merges SoundCloud/YouTube in via
+  `subscribeSearchExtra`. The old `if (merged.length <= out.length) return`
+  dropped every SoundCloud result whenever the catalogue already filled `limit`
+  (the merged, interleaved list is the same length but contains new tracks).
+  The guard now returns only when no track id in `merged` is new.
+* **The stitched MP4 is only as long as the fragments behind it.** Its `mvhd`
+  duration is `0` and there is no `mehd`, so the browser derives the duration
+  from `moof`/`trun`. Verify playback by reading `audio.duration` off the real
+  element, not just by checking that the manifest and segments returned 200 —
+  and never trust a page that is fed `--virtual-time-budget`, which fires
+  `setTimeout` instantly and makes a healthy track look like a metadata timeout.
 
 Verified server-side path (the recommended Amvera deployment, `Dockerfile`,
 port 8787): `/api/search?src=sc` returns real tracks, `/api/resolve?src=sc`
@@ -595,3 +613,9 @@ returns `{"ok":true}`, and `/api/audio?src=sc` streams `audio/mp4` with `206`
 and range support. The server is the more reliable of the two paths; the
 server-less route exists so the site also works on a static host.
 
+Verified server-less path (GitHub Pages build, real headless Chromium, driven
+over CDP): searching `lofi` shows 12 `SOUNDCLOUD` rows; clicking one resolves
+the media URL, fetches the 25-segment playlist plus init, stitches a blob, and
+the app's own audio element reports `duration=244.1s` with `currentTime`
+advancing. That is a full-length track with no companion server — the failure
+mode to watch for is rows appearing while playback never starts.
