@@ -18,7 +18,11 @@ import { fileURLToPath } from 'node:url'
 import { dirname, extname, join, normalize } from 'node:path'
 import { getLibrary, login, logout, publicUser, register, setLibrary, userForToken } from './auth.mjs'
 
-const PORT = Number(process.env.MONO_SERVER_PORT || 8787)
+// Hosting platforms (Render, Railway, Fly) inject the port to bind, and their
+// router reaches the process from outside the container, so the listener must
+// not be pinned to loopback there. Locally `MONO_SERVER_PORT` still wins.
+const PORT = Number(process.env.PORT || process.env.MONO_SERVER_PORT || 8787)
+const HOST = process.env.MONO_HOST || '0.0.0.0'
 
 // The APK lives outside public/ so Vite never bundles it into the web build
 // (which would make each APK contain the previous one). It is served here and
@@ -1352,8 +1356,8 @@ const server = createServer(async (req, res) => {
   serveWeb(req, res, url.pathname)
 })
 
-server.listen(PORT, () => {
-  console.log(`[monochrome] audio proxy on http://127.0.0.1:${PORT}`)
+server.listen(PORT, HOST, () => {
+  console.log(`[monochrome] server on http://${HOST}:${PORT}`)
 })
 
 // Stitched HLS tracks are disposable: clear them on start so a stale file from
