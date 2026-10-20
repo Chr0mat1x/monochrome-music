@@ -1,6 +1,6 @@
 import type { Album, Artist, Source, Track } from '../types'
 import { hasNativeBridge, nativeResolveSoundCloud, nativeSearchSoundCloud } from './nativeBridge'
-import { scPlayableUrl, scSearch } from './scClient'
+import { scPlayableUrl, scSearch, stitchScHls } from './scClient'
 import { audioServerBase, serverConfigured } from './serverConfig'
 
 /* ------------------------------------------------------------------ *
@@ -1311,12 +1311,14 @@ export function resolveFullAudio(sourceId: string, src: 'yt' | 'sc' = 'yt'): Pro
   }
 
   // The server signs *and* proxies SoundCloud audio, so it plays even where
-  // SoundCloud's CDN is blocked; the native bridge can only hand back a direct
-  // CDN URL, which such a network cannot reach. Prefer the server when present.
+  // SoundCloud's CDN is blocked; the native bridge hands back a signed CDN URL
+  // that the page stitches itself, so it needs the CDN to be reachable. Prefer
+  // the server when present.
   if (hasNativeBridge()) {
     return hasAudioServer().then((up) => {
       if (up) return resolveViaServer(sourceId, src)
-      return nativeResolveSoundCloud(sourceId).catch(() => null)
+      if (src === 'sc') return resolveScNative(sourceId)
+      return null
     })
   }
 
@@ -1338,6 +1340,23 @@ async function resolveScServerless(sourceId: string): Promise<string | null> {
     serverlessScBlob = playable.url
   }
   return playable.url
+}
+
+/**
+ * Resolve SoundCloud through the Android bridge, which signs the URL in Java
+ * (no CORS applies there) but cannot make an <audio>-playable file: the full
+ * songs are HLS-only, so the fragments are fetched and stitched here. The CDN
+ * sends `Access-Control-Allow-Origin: *`, so the WebView may read them.
+ */
+async function resolveScNative(sourceId: string): Promise<string | null> {
+  const media = await nativeResolveSoundCloud(sourceId).catch(() => null)
+  if (!media) return null
+  if (media.protocol === 'progressive') return media.url
+  const blob = await stitchScHls(media.url).catch(() => null)
+  if (!blob) return null
+  if (serverlessScBlob) URL.revokeObjectURL(serverlessScBlob)
+  serverlessScBlob = URL.createObjectURL(blob)
+  return serverlessScBlob
 }
 
 /** Resolve through the companion server, memoising only successes. */

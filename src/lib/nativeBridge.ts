@@ -91,8 +91,23 @@ export async function nativeSearchSoundCloud(query: string): Promise<NativeSound
   }
 }
 
-/** Resolve a SoundCloud track id to a direct, seekable audio URL. */
-export async function nativeResolveSoundCloud(id: string): Promise<string | null> {
+/** A signed stream the native side found, before it is made playable. */
+export interface NativeScMedia {
+  /** 'hls' is a manifest the page must stitch; 'progressive' is a direct file. */
+  protocol: 'hls' | 'progressive'
+  url: string
+}
+
+/** Resolve a SoundCloud track id to a signed stream descriptor. */
+export async function nativeResolveSoundCloud(id: string): Promise<NativeScMedia | null> {
   if (!hasNativeBridge()) return null
-  return call('resolveSoundCloud', id)
+  const raw = await call('resolveSoundCloud', id)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<NativeScMedia>
+    if (!parsed || typeof parsed.url !== 'string' || !parsed.url) return null
+    return { protocol: parsed.protocol === 'progressive' ? 'progressive' : 'hls', url: parsed.url }
+  } catch {
+    return null
+  }
 }

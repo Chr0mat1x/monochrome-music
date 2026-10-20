@@ -29,6 +29,13 @@ import java.util.regex.Pattern;
  * itself cannot make them. Java has no such restriction, so this bridge does
  * those two steps and hands the page ready-to-use results.
  *
+ * The result is a *media descriptor*, not a playable URL: most uploads now
+ * carry only HLS transcodings, which an {@code <audio>} element cannot decode.
+ * The page stitches the fragments into one MP4 itself (the CDN allows the
+ * cross-origin fetch), so the bridge reports the manifest URL and lets the web
+ * layer do the joining. The only progressive streams left in the catalogue are
+ * 30-second previews, which is why they must never be preferred.
+ *
  * Calls are asynchronous: the network work runs off the WebView's JS thread and
  * the answer comes back through {@code window.__monoNativeResult(cb, value)},
  * so a slow request never freezes the UI.
@@ -48,31 +55,31 @@ public class SoundCloudBridge {
 
     private final WebView web;
     private final Handler main = new Handler(Looper.getMainLooper());
-    private String clientId;
+    private volatile String clientId;
 
     public SoundCloudBridge(WebView web) {
         this.web = web;
     }
 
-    /** Resolve a SoundCloud track id to a direct, seekable audio URL, or null. */
+    /** Resolve a track id to a media descriptor JSON, or null when unplayable. */
     @JavascriptInterface
     public void resolveSoundCloud(final String trackId, final String callback) {
         new Thread(() -> {
-            String url = null;
+            String json = null;
             if (trackId != null && trackId.matches("\\d{1,14}")) {
                 try {
-                    url = resolve(trackId, clientId());
+                    json = resolve(trackId, clientId());
                 } catch (Exception first) {
                     // The scraped id can be rotated out from under us; refresh once.
                     try {
                         clientId = null;
-                        url = resolve(trackId, clientId());
+                        json = resolve(trackId, clientId());
                     } catch (Exception second) {
-                        url = null;
+                        json = null;
                     }
                 }
             }
-            reply(callback, url);
+            reply(callback, json);
         }).start();
     }
 
@@ -97,6 +104,11 @@ public class SoundCloudBridge {
         }).start();
     }
 
+    /**
+     * Pick the stream to hand back. HLS wins: SoundCloud's remaining progressive
+     * transcodings are 30-second previews, so preferring them truncated every
+     * song to half a minute. Returns JSON {@code {"protocol":…,"url":…}}.
+     */
     private String resolve(String trackId, String id) throws Exception {
         if (id == null) return null;
         JSONObject track = new JSONObject(get(
@@ -104,20 +116,33 @@ public class SoundCloudBridge {
         JSONObject media = track.optJSONObject("media");
         JSONArray transcodings = media != null ? media.optJSONArray("transcodings") : null;
         if (transcodings == null) return null;
-        String endpoint = null;
+
+        JSONObject hls = null;
+        JSONObject progressive = null;
         for (int i = 0; i < transcodings.length(); i++) {
             JSONObject t = transcodings.optJSONObject(i);
             JSONObject format = t != null ? t.optJSONObject("format") : null;
-            // A <audio> element cannot play SoundCloud's HLS; only the
-            // progressive MP3 streams (and it is seekable via range requests).
-            if (format != null && "progressive".equals(format.optString("protocol"))) {
-                endpoint = t.optString("url", null);
-                break;
-            }
+            if (format == null) continue;
+            String protocol = format.optString("protocol", "");
+            // DRM cannot be stitched, so an encrypted rendition is no use.
+            if (protocol.contains("encrypted")) continue;
+            if ("hls".equals(protocol) && hls == null) hls = t;
+            else if ("progressive".equals(protocol) && progressive == null) progressive = t;
         }
+
+        JSONObject pick = hls != null ? hls : progressive;
+        if (pick == null) return null;
+        String endpoint = pick.optString("url", null);
         if (endpoint == null) return null;
+
         JSONObject resolved = new JSONObject(get(endpoint + "?client_id=" + id));
-        return resolved.optString("url", null);
+        String url = resolved.optString("url", null);
+        if (url == null) return null;
+
+        JSONObject out = new JSONObject();
+        out.put("protocol", hls != null ? "hls" : "progressive");
+        out.put("url", url);
+        return out.toString();
     }
 
     private String search(String query, String id) throws Exception {
@@ -142,24 +167,23 @@ public class SoundCloudBridge {
     /**
      * List a query and keep only uploads that will actually play.
      *
-     * Passing the policy filter is not enough: many ALLOW uploads carry only
-     * HLS transcodings, which a {@code <audio>} element cannot decode. The
-     * search response lists HLS for *everything* — it never shows a progressive
-     * stream — so the only way to tell them apart is to ask for the track and
-     * look. Without this the app lists tracks that fail the moment they are
-     * tapped, which is exactly the "ничего не играет" symptom.
+     * Passing the policy filter is not enough: many uploads carry only HLS
+     * transcodings, which a {@code <audio>} element cannot decode on its own,
+     * and the search response never shows the transcodings at all — so the only
+     * way to tell them apart is to ask for the track and look. Without this the
+     * app lists tracks that fail the moment they are tapped.
      */
     private JSONArray playablePage(String query, String id) throws Exception {
         JSONArray listed = page(query, id, 50);
         if (listed.length() == 0) return listed;
         JSONArray kept = probe(listed, id);
         // If the probe confirmed nothing the API layer is probably having a bad
-        // day rather than the whole catalogue being HLS; trust the policy filter
+        // day rather than the whole catalogue being unplayable; trust the list
         // instead of returning a blank page.
         return kept.length() > 0 ? kept : listed;
     }
 
-    /** Keep the listed tracks whose own record exposes a progressive stream. */
+    /** Keep the listed tracks whose own record exposes a stream we can play. */
     private JSONArray probe(JSONArray listed, final String id) throws Exception {
         final int n = Math.min(listed.length(), 15);
         final boolean[] ok = new boolean[n];
@@ -171,7 +195,7 @@ public class SoundCloudBridge {
                 int i;
                 while ((i = cursor.getAndIncrement()) < n) {
                     try {
-                        ok[i] = hasProgressive(listed.getJSONObject(i).optString("id", ""), id);
+                        ok[i] = hasPlayable(listed.getJSONObject(i).optString("id", ""), id);
                     } catch (Exception ignored) {
                         ok[i] = false;
                     }
@@ -185,7 +209,8 @@ public class SoundCloudBridge {
         return out;
     }
 
-    private boolean hasProgressive(String trackId, String id) throws Exception {
+    /** True when the track has an HLS or progressive (non-DRM) transcoding. */
+    private boolean hasPlayable(String trackId, String id) throws Exception {
         if (trackId.isEmpty() || id == null) return false;
         JSONObject track = new JSONObject(get(
                 "https://api-v2.soundcloud.com/tracks/" + trackId + "?client_id=" + id));
@@ -195,7 +220,10 @@ public class SoundCloudBridge {
         for (int i = 0; i < transcodings.length(); i++) {
             JSONObject t = transcodings.optJSONObject(i);
             JSONObject format = t != null ? t.optJSONObject("format") : null;
-            if (format != null && "progressive".equals(format.optString("protocol"))) return true;
+            if (format == null) continue;
+            String protocol = format.optString("protocol", "");
+            if (protocol.contains("encrypted")) continue;
+            if ("hls".equals(protocol) || "progressive".equals(protocol)) return true;
         }
         return false;
     }
@@ -209,12 +237,11 @@ public class SoundCloudBridge {
         for (int i = 0; i < collection.length(); i++) {
             JSONObject t = collection.optJSONObject(i);
             if (t == null) continue;
-            // Licensed (MONETIZE) uploads have no anonymous progressive stream
-            // and answer 404 on resolve, so listing them only produces tracks
-            // that fail the moment they are tapped. Drop them and let the
-            // playable uploads fill the list instead.
-            String policy = t.optString("policy", "");
-            if ("MONETIZE".equals(policy) || !t.optBoolean("streamable", true)) continue;
+            // MONETIZE uploads used to be dropped, but that removed almost the
+            // whole catalogue: the licensed tracks are exactly the ones whose
+            // full songs are HLS-only, and those play fine once stitched. Only
+            // genuinely unstreamable uploads are skipped now.
+            if (!t.optBoolean("streamable", true)) continue;
             JSONObject user = t.optJSONObject("user");
             JSONObject item = new JSONObject();
             item.put("id", t.optString("id", ""));
@@ -224,7 +251,7 @@ public class SoundCloudBridge {
             item.put("artwork", t.optString("artwork_url", ""));
             // 'SNIP' uploads are the 30-second clips the rights holder allows;
             // the UI labels them as previews and tries to upgrade to a full one.
-            item.put("policy", policy);
+            item.put("policy", t.optString("policy", ""));
             out.put(item);
         }
         return out;

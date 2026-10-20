@@ -27,8 +27,11 @@ Work is committed on `master` (HEAD `6279c9a`), pushed to `origin/main`.
   itself (one process, no Vite).
 - Mobile gestures: swipe left/right on the content to move between the five
   tabs (`lib/useSwipeTabs`, wired in `App.tsx`). The APK has no companion
-  server, so SoundCloud goes through the native bridge, which now probes
-  each result for a progressive stream before listing it.
+  server, so SoundCloud goes through the native bridge: it resolves a track to
+  an `{protocol, url}` descriptor (HLS preferred — the only progressive streams
+  left are 30-second previews) and the WebView stitches the HLS itself. The
+  bridge no longer drops `MONETIZE` results; it probes each listed track against
+  the API and keeps anything with a non-DRM HLS *or* progressive rendition.
 - **Companion server address (`lib/serverConfig.ts`).** The APK has no
   server of its own, and on a network that blocks the music CDNs the phone
   cannot reach them either — so the app can be pointed at a deployment and
@@ -49,14 +52,16 @@ Work is committed on `master` (HEAD `6279c9a`), pushed to `origin/main`.
   of it in one shot — yt-dlp, JDK 21 at `/home/openhands/jdk` (Temurin),
   Android SDK at `/home/openhands/android-sdk` — and prints the exports to use.
   Run it, then `JAVA_HOME=/home/openhands/jdk ANDROID_HOME=/home/openhands/android-sdk
-  npm run build:apk`. This box also has JDK 21 at
-  `/usr/lib/jvm/java-21-openjdk-amd64` (apt `openjdk-21-jdk-headless`), which
-  builds the APK too; `unzip` is absent, use Python's `zipfile`.
+  npm run build:apk`. If `/opt` is not writable, the same toolchain can live
+  under `/workspace/toolchain` (Temurin JDK 17 + cmdline-tools; set
+  `sdk.dir` in `android/local.properties` accordingly). `unzip` is absent, use
+  Python's `zipfile`.
 - Known limit on this host: YouTube returns "Sign in to confirm you're not a
   bot" for anonymous datacenter IPs; SoundCloud is the reliable full-song path.
   On a phone/home IP the YouTube IFrame player works.
 - Live links: site https://work-1-bcnpsrwlxctxiqwy.prod-runtime.all-hands.dev/ ,
-  APK at …/MONOCHROME.apk (served from `downloads/`, versionCode 5 / 1.4).
+  APK at …/MONOCHROME.apk (served from `downloads/`, versionCode 7 / 1.6). Both
+  only answer while the sandbox runs `node server/index.mjs` on port 12000.
 - **The sandbox URL is not permanent.** `bcnpsrwlxctxiqwy` is the workspace id, so
   the hostname is stable across sessions, but the sandbox only runs while a
   session is active. A genuinely permanent address needs external hosting.
