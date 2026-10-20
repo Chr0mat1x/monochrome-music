@@ -1,5 +1,6 @@
 import type { Track } from '../types'
 import { resolveAudiusStream, resolveDeezerStream, resolveFullAudio, resolveMediaUrl } from './musicApi'
+import { offlineUrl } from './offline'
 import { loadYouTubeApi } from './youtube'
 
 type YTPlayer = {
@@ -210,11 +211,16 @@ export class AudioEngine {
     this.loading = true
     this.events.onLoadingChange?.(true)
 
-    // Work out a direct audio URL first. YouTube tracks prefer the local
-    // yt-dlp server (full-length audio, analyser intact); if it is not
-    // available we fall back to the official IFrame player further down.
+    // Work out a direct audio URL first. A track saved to the offline library
+    // always wins: its blob needs no network, which is the whole point on a
+    // phone with no signal.
+    const local = await offlineUrl(track.id).catch(() => null)
+    if (token !== this.token) return
+
     let url: string | null
-    if (track.source === 'youtube') {
+    if (local) {
+      url = local
+    } else if (track.source === 'youtube') {
       url = track.streamUrl
       if (!url) {
         url = await resolveFullAudio(track.sourceId).catch(() => null)

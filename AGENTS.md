@@ -60,7 +60,7 @@ Work is committed on `master` (HEAD `6279c9a`), pushed to `origin/main`.
   bot" for anonymous datacenter IPs; SoundCloud is the reliable full-song path.
   On a phone/home IP the YouTube IFrame player works.
 - Live links: site https://work-1-bcnpsrwlxctxiqwy.prod-runtime.all-hands.dev/ ,
-  APK at …/MONOCHROME.apk (served from `downloads/`, versionCode 7 / 1.6). Both
+  APK at …/MONOCHROME.apk (served from `downloads/`, versionCode 8 / 1.7). Both
   only answer while the sandbox runs `node server/index.mjs` on port 12000.
 - **The sandbox URL is not permanent.** `bcnpsrwlxctxiqwy` is the workspace id, so
   the hostname is stable across sessions, but the sandbox only runs while a
@@ -297,6 +297,22 @@ not use it — the APK talks to SoundCloud through a native Java bridge instead.
 - `downloadTrack` (`src/lib/download.ts`) fetches the CDN bytes into a Blob
   because the media hosts send permissive CORS headers; if that fetch is
   blocked it falls back to opening the raw URL.
+- **Offline library (`src/lib/offline.ts`).** The track menu's «Сохранить
+  офлайн» stores the audio as a real Blob in IndexedDB (`monochrome-offline`)
+  and the engine plays it *before* any network resolve, so a saved song works
+  with no signal at all — the case the APK exists for. IndexedDB, not
+  CacheStorage, so a service-worker version bump cannot drop the audio. The
+  in-memory `ids` Set keeps `isOffline()` synchronous for the menu; the stored
+  snapshot drops the `streamUrl` so playback always goes through the Blob.
+  «Скачать файлом» remains the share-a-file action; they are separate on
+  purpose.
+- **The late search sources must be merged, not just fetched.**
+  `searchAll(..., true)` publishes Deezer/iTunes/Audius immediately and the
+  SoundCloud/YouTube batch seconds later, and the first batch usually fills
+  `limit` on its own. `Search.tsx` and `Generate.tsx` both subscribe to
+  `subscribeSearchExtra` and re-score the merged list; a page that only awaits
+  `searchAll` silently shows no full-length SoundCloud tracks at all — and in
+  the APK that means nothing playable.
 - Full-length playback: commercial Deezer/iTunes tracks are 30s previews. On
   play, `startTrack` fires `upgradeToFullTrack` and hot-swaps in the full
   track, keeping the position; in-flight lookups are deduped in an `upgrades`

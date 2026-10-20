@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Track } from '../types'
 import { useStore } from '../store/useStore'
 import { parseMood, buildSearchQueries, type MoodQuery } from '../lib/moodEngine'
 import { planMood, planMoodLocal, planToQuery } from '../lib/moodPlanner'
-import { searchAll, isPlayableTrack, preferOriginals, prefetchFullTracks, subscribeFullTracks } from '../lib/musicApi'
+import { searchAll, isPlayableTrack, preferOriginals, prefetchFullTracks, subscribeFullTracks, subscribeSearchExtra } from '../lib/musicApi'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { Cover } from '../components/Cover'
 import { ShareButton } from '../components/ShareButton'
@@ -43,6 +43,23 @@ export function Generate() {
   const createPlaylist = useStore((s) => s.createPlaylist)
   const register = useStore((s) => s.register)
 
+  // The mood profile and search terms of the current generation, kept in a ref
+  // so the late-arriving SoundCloud/YouTube batch is scored the same way the
+  // first batch was. `gen` guards against a stale batch landing after a newer run.
+  const ctx = useRef<{ query: MoodQuery; terms: string[]; limit: number } | null>(null)
+  const gen = useRef(0)
+
+  /** Score, diversify and register a raw pool the same way every time. */
+  const build = (pool: Track[], query: MoodQuery, terms: string[], limit: number): Track[] => {
+    const usable = preferOriginals(pool.filter(isPlayableTrack))
+    const scored = usable
+      .map((t) => ({ t, score: moodDistance(query, t, terms) }))
+      .sort((a, b) => a.score - b.score)
+    const picked = diversify(scored.map((s) => s.t), limit)
+    register(picked)
+    return picked
+  }
+
   // Fold resolved full versions back into the generated list, so the 30s
   // preview badges turn into full songs as the background prefetch lands.
   useEffect(() => {
@@ -55,6 +72,20 @@ export function Generate() {
     })
   }, [])
 
+  // `searchAll(..., true)` publishes its catalogue hits immediately and the
+  // SoundCloud/YouTube batch seconds later. The first batch usually fills the
+  // limit on its own, so without this the full-length sources — the only ones
+  // that play in the APK — never showed up in a generated playlist.
+  useEffect(() => {
+    return subscribeSearchExtra((_, tracks) => {
+      const c = ctx.current
+      if (!c) return
+      const merged = build(tracks, c.query, c.terms, c.limit)
+      setResult((cur) => (cur ? { ...cur, tracks: merged } : cur))
+      void prefetchFullTracks(merged)
+    })
+  }, [])
+
   // Live "how I read this" preview: the same understanding used at generation
   // time, computed locally so it updates as you type with no network round-trip.
   const previewPlan = text.trim() ? planMoodLocal(text) : null
@@ -62,17 +93,20 @@ export function Generate() {
 
   const run = async () => {
     if (!text.trim()) return
+    const myRun = ++gen.current
     setBusy(true)
     setSaved(false)
     // Let the model read the description: it decides the search queries and the
     // musical profile, instead of us only pattern-matching keywords.
     const plan = await planMood(text).catch(() => null)
+    if (myRun !== gen.current) return
     const query = plan ? planToQuery(plan) : parseMood(text)
     // model-authored queries first, rule-based terms appended, then fan out
     const queries = buildSearchQueries(query, text, plan?.queries ?? [])
     const batches = await Promise.all(
       queries.map((q) => searchAll(q, Math.max(limit, 40), true).catch(() => [])),
     )
+    if (myRun !== gen.current) return
     const seen = new Set<string>()
     const pool: Track[] = []
     for (const batch of batches) {
@@ -85,18 +119,14 @@ export function Generate() {
     }
 
     const terms = [...(plan?.queries ?? []), ...(plan?.artists ?? []), ...query.genres]
+    ctx.current = { query, terms, limit }
     // Drop uploads that never make a good playlist pick: hour-long "mixes",
     // "Top 100 Hits" compilations and 15-second clips.
-    const usable = preferOriginals(pool.filter(isPlayableTrack))
-    const scored = usable
-      .map((t) => ({ t, score: moodDistance(query, t, terms) }))
-      .sort((a, b) => a.score - b.score)
-    const picked = diversify(scored.map((s) => s.t), limit)
+    const picked = build(pool, query, terms, limit)
 
-    register(picked)
     setResult({
       name: plan?.title || query.title || text.slice(0, 40),
-      description: `Сгенерировано по описанию: «${text.trim()}». Найдено ${picked.length} реальных треков в каталогах Deezer, iTunes и Audius.`,
+      description: `Сгенерировано по описанию: «${text.trim()}». Найдено ${picked.length} реальных треков в каталогах и полных загрузок.`,
       query,
       tracks: picked,
       understood: plan?.summary ?? '',

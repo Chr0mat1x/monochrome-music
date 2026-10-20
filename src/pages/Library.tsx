@@ -1,13 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import type { Track } from '../types'
 import { useStore } from '../store/useStore'
 import { Cover } from '../components/Cover'
 import { TrackRow, TrackListHeader } from '../components/TrackRow'
 import { MediaCard } from '../components/MediaCard'
 import { SettingsPanel } from '../components/SettingsPanel'
 import { IconHeart, IconPlay, IconPlus } from '../components/Icons'
+import { listOffline, offlineStats, subscribeOffline } from '../lib/offline'
 
-type Tab = 'liked' | 'playlists' | 'recent' | 'settings'
+type Tab = 'liked' | 'playlists' | 'recent' | 'offline' | 'settings'
 
 export function Library() {
   const [tab, setTab] = useState<Tab>('liked')
@@ -16,6 +18,23 @@ export function Library() {
   const recentlyPlayed = useStore((s) => s.recentlyPlayed)
   const playContext = useStore((s) => s.playContext)
   const createPlaylist = useStore((s) => s.createPlaylist)
+
+  const [offlineTracks, setOfflineTracks] = useState<Track[]>([])
+  const [offlineBytes, setOfflineBytes] = useState(0)
+
+  useEffect(() => {
+    let alive = true
+    const refresh = () => {
+      void listOffline().then((t) => alive && setOfflineTracks(t))
+      void offlineStats().then((s) => alive && setOfflineBytes(s.bytes))
+    }
+    refresh()
+    const stop = subscribeOffline(refresh)
+    return () => {
+      alive = false
+      stop()
+    }
+  }, [])
 
   return (
     <div className="px-4 pb-10 sm:px-6">
@@ -35,6 +54,7 @@ export function Library() {
             ['liked', `Избранное · ${liked.length}`],
             ['playlists', `Плейлисты · ${playlists.length}`],
             ['recent', `Недавно · ${recentlyPlayed.length}`],
+            ['offline', `Офлайн · ${offlineTracks.length}`],
             ['settings', 'Настройки'],
           ] as const
         ).map(([k, label]) => (
@@ -110,6 +130,36 @@ export function Library() {
         </div>
       )}
 
+      {tab === 'offline' && (
+        <div className="mt-6">
+          {offlineTracks.length === 0 ? (
+            <Empty text="Треки, сохранённые для офлайна, появятся здесь. Откройте меню трека (⋯) и нажмите «Сохранить офлайн»." />
+          ) : (
+            <>
+              <div className="mb-4 flex items-center gap-4">
+                <button
+                  className="grid h-14 w-14 place-items-center rounded-full bg-ink-100 text-ink-0 transition-transform hover:scale-105"
+                  onClick={() => playContext(offlineTracks, 0)}
+                  aria-label="Играть"
+                >
+                  <IconPlay width={22} height={22} />
+                </button>
+                <div className="text-sm text-ink-60">
+                  <div className="font-semibold text-ink-80">
+                    {offlineTracks.length} треков · {formatBytes(offlineBytes)}
+                  </div>
+                  Играют без интернета.
+                </div>
+              </div>
+              <TrackListHeader />
+              {offlineTracks.map((t, i) => (
+                <TrackRow key={t.id} track={t} index={i} context={offlineTracks} showCover />
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
       {tab === 'settings' && (
         <div className="mt-6 max-w-xl">
           <SettingsPanel />
@@ -117,6 +167,13 @@ export function Library() {
       )}
     </div>
   )
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} Б`
+  if (n < 1048576) return `${(n / 1024).toFixed(0)} КБ`
+  if (n < 1073741824) return `${(n / 1048576).toFixed(1)} МБ`
+  return `${(n / 1073741824).toFixed(2)} ГБ`
 }
 
 function Empty({ text, icon = false }: { text: string; icon?: boolean }) {

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { Track } from '../types'
 import { useStore } from '../store/useStore'
 import { downloadTrack } from '../lib/download'
+import { isOffline, offlineReady, removeOffline, saveOffline, subscribeOffline } from '../lib/offline'
 import { upgradeToFullTrack } from '../lib/musicApi'
 import { copyText, trackShareLink } from '../lib/share'
 import { IconCheck, IconDownload, IconHeart, IconLink, IconListPlus, IconPlus, IconQueue, IconTrash, IconWave } from './Icons'
@@ -19,6 +20,9 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
   const ref = useRef<HTMLDivElement | null>(null)
   const [subOpen, setSubOpen] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
+  const [offline, setOffline] = useState(isOffline(track.id))
+  const [saving, setSaving] = useState<number | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const playlists = useStore((s) => s.playlists)
   const liked = useStore((s) => s.liked.some((t) => t.id === track.id))
   const toggleLike = useStore((s) => s.toggleLike)
@@ -46,6 +50,32 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
   const ownedPlaylists = playlists.filter((p) => p.owned)
   const left = Math.min(x + 8, window.innerWidth - 240)
   const top = Math.min(y + 4, window.innerHeight - 380)
+
+  // The offline index loads asynchronously, so re-check once it is ready and
+  // whenever another save/remove happens elsewhere in the app.
+  useEffect(() => {
+    let alive = true
+    const sync = () => alive && setOffline(isOffline(track.id))
+    void offlineReady().then(sync)
+    const stop = subscribeOffline(sync)
+    return () => {
+      alive = false
+      stop()
+    }
+  }, [track.id])
+
+  async function download() {
+    setSaveError(null)
+    setSaving(0)
+    try {
+      await saveOffline(track, (p) => setSaving(p))
+      setOffline(true)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Ошибка загрузки')
+    } finally {
+      setSaving(null)
+    }
+  }
 
   return createPortal(
     <div
@@ -122,16 +152,58 @@ export function TrackMenu({ track, x, y, onClose, onRemove }: TrackMenuProps) {
         {linkCopied ? 'Ссылка скопирована' : 'Скопировать ссылку'}
       </button>
 
-      <button
-        className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
-        onClick={() => {
-          void downloadTrack(track).catch(() => {})
-          onClose()
-        }}
-      >
-        <IconDownload width={16} height={16} />
-        {track.source === 'youtube' ? 'Открыть на YouTube' : track.preview ? 'Скачать превью' : 'Скачать трек'}
-      </button>
+      {track.source === 'youtube' ? (
+        <button
+          className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
+          onClick={() => {
+            if (track.permalink) window.open(track.permalink, '_blank', 'noopener')
+            onClose()
+          }}
+        >
+          <IconDownload width={16} height={16} />
+          Открыть на YouTube
+        </button>
+      ) : offline ? (
+        <button
+          className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20"
+          onClick={() => {
+            void removeOffline(track.id)
+            setOffline(false)
+            onClose()
+          }}
+        >
+          <IconTrash width={16} height={16} />
+          Удалить из офлайна
+        </button>
+      ) : (
+        <button
+          className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-90 hover:bg-ink-20 disabled:opacity-60"
+          disabled={saving !== null}
+          onClick={() => void download()}
+        >
+          <IconDownload width={16} height={16} />
+          {saving !== null
+            ? `Сохранение… ${Math.round((saving || 0) * 100)}%`
+            : track.preview
+              ? 'Сохранить офлайн (превью)'
+              : 'Сохранить офлайн'}
+        </button>
+      )}
+
+      {saveError && <div className="px-3 pb-1 text-xs text-ink-60">{saveError}</div>}
+
+      {track.source !== 'youtube' && (
+        <button
+          className="flex w-full items-center gap-3 px-3 py-2 text-left text-ink-60 hover:bg-ink-20"
+          onClick={() => {
+            void downloadTrack(track).catch(() => {})
+            onClose()
+          }}
+        >
+          <IconDownload width={16} height={16} />
+          Скачать файлом
+        </button>
+      )}
 
       <div className="my-1 h-px bg-ink-25" />
 
